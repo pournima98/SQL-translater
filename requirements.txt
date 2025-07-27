@@ -1,0 +1,13 @@
+pandas
+sqlalchemy
+pymysql
+Faker
+scikit-learn
+matplotlib
+seaborn
+openai
+python-pptx
+flask
+langchain
+python-dotenv
+jinja2
