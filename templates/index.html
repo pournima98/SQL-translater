@@ -13,6 +13,8 @@
         <input type="text" name="question" class="form-control" required>
       </div>
       <button type="submit" class="btn btn-primary">Get Insight</button>
+      <h2>Welcome to Churn Dashboard</h2>
+      <a href="/report">View Churn Report</a>
     </form>
 
     {% if query %}
@@ -28,6 +30,7 @@
         {{ result|safe }}
       </div>
     {% endif %}
+
   </div>
 </body>
 </html>
