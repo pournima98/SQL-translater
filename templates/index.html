@@ -30,6 +30,10 @@
         {{ result|safe }}
       </div>
     {% endif %}
+    {% if chart_path %}
+    <h3>Chart</h3>
+    <img src="{{ chart_path }}" alt="Chart" style="width:600px;">
+    {% endif %}
 
   </div>
 </body>
