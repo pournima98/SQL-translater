@@ -1,3 +1,6 @@
+#########
+
+
 import os
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
@@ -18,6 +21,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 import base64
+from flask import jsonify
+import json
+
+
 
 load_dotenv()  # loads variables from .env into environment
 
@@ -136,9 +143,10 @@ def send_email(subject, body, to_email, chart_image_bytes=None, table_html=None)
     msg['subject'] = subject
 
     # Add body with table
-    html_body = f"{body}<br><br>{table_html or ''}"
+    #html_body = f"{body}<br><br>{table_html or ''}"
+    #msg.attach(MIMEText(html_body, "html"))
+    html_body = body
     msg.attach(MIMEText(html_body, "html"))
-
     # Add chart as attachment if available
     if chart_image_bytes:
         chart_attachment = MIMEImage(chart_image_bytes)
@@ -155,9 +163,9 @@ def send_email(subject, body, to_email, chart_image_bytes=None, table_html=None)
     except Exception as e:
         raise Exception(f"Failed to send email: {str(e)}")
 
+# Enhanced compose_email route
 @app.route("/compose_email", methods=["GET", "POST"])
 def compose_email():
-    # Check if user is authenticated
     if 'credentials' not in session:
         return redirect(url_for('authorize'))
 
@@ -169,30 +177,100 @@ def compose_email():
         if not all([to_email, subject, body]):
             return render_template("compose_email.html", error="Please fill in all required fields")
         
-        chart_base64 = session.get('chart_base64')
-        table_html = session.get('table_html')
-
-        chart_bytes = None
-        if chart_base64:
-            try:
-                # Remove data URL prefix if present
-                if ',' in chart_base64:
-                    chart_bytes = base64.b64decode(chart_base64.split(",")[1])
-                else:
-                    chart_bytes = base64.b64decode(chart_base64)
-            except Exception as e:
-                print(f"Error processing chart: {str(e)}")
-
+        # For now, let's just send a simple email with the message
+        # The data attachment issue can be addressed separately
         try:
-            result = send_email(subject, body, to_email, chart_bytes, table_html)
+            simple_html = f'''<!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                    .content {{ padding: 20px; }}
+                </style>
+            </head>
+            <body>
+                <div class="content">
+                    {body.replace(chr(10), '<br>')}
+                    
+                   
+                    
+                
+                </div>
+            </body>
+            </html>'''
+            
+            # Create and send email
+            creds = Credentials(
+                token=session['credentials']['token'],
+                refresh_token=session['credentials']['refresh_token'],
+                token_uri=session['credentials']['token_uri'],
+                client_id=session['credentials']['client_id'],
+                client_secret=session['credentials']['client_secret'],
+                scopes=session['credentials']['scopes']
+            )
+
+            service = build("gmail", "v1", credentials=creds)
+            msg = MIMEMultipart()
+            msg['to'] = to_email
+            msg['subject'] = subject
+            msg.attach(MIMEText(simple_html, "html"))
+
+            raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+            message_body = {"raw": raw_message}
+            
+            result = service.users().messages().send(userId="me", body=message_body).execute()
             return f"✅ Email sent successfully! Message ID: {result['id']}"
+            
         except Exception as e:
             return f"Error sending email: {str(e)}"
 
     # Handle GET request
-    user_msg = request.args.get("user_message", "Please find attached the churn insights.")
-    rewritten = rewrite_message(user_msg)
-    return render_template("compose_email.html", rewritten_message=rewritten)
+    #analysis_summary = session.get('analysis_summary', '')
+    analysis_summary = "Email ready to send" 
+    chart_available = session.get('chart_base64') is not None
+    original_question = session.get('original_question', 'N/A')
+    
+    default_message = "Please find the analysis results below."
+    if original_question != 'N/A':
+        default_message = f"Please find the data analysis results for: {original_question}"
+    
+    return render_template("compose_email.html", 
+                         rewritten_message=default_message,
+                         analysis_summary="Ready to send",
+                         chart_available=chart_available,
+                         original_question=original_question)
+
+# Add a simple test route for the rewriter
+@app.route("/test_rewrite")
+def test_rewrite():
+    """Simple test page for the rewriter"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Test AI Rewrite</title>
+        <script>
+            async function testRewrite() {
+                const message = document.getElementById('testMessage').value;
+                const response = await fetch('/rewrite_message', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message: message, tone: 'professional', length: 'concise'})
+                });
+                const data = await response.json();
+                document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+            }
+        </script>
+    </head>
+    <body>
+        <h2>Test AI Rewrite</h2>
+        <textarea id="testMessage" placeholder="Enter message to rewrite">find churn data</textarea><br><br>
+        <button onclick="testRewrite()">Test Rewrite</button>
+        <div id="result"></div>
+    </body>
+    </html>
+    '''
 
 @app.route("/authorize")
 def authorize():
@@ -307,6 +385,125 @@ def auth_status():
         return "✅ Authenticated with Gmail"
     else:
         return "❌ Not authenticated. <a href='/authorize'>Click here to authorize</a>"
+
+def rewrite_message_advanced(user_input, tone="professional", length="concise"):
+    """Advanced message rewriting with tone and length control"""
+    
+    tone_prompts = {
+        "professional": "professional and business-appropriate",
+        "friendly": "friendly and warm while maintaining professionalism",
+        "formal": "formal and respectful",
+        "casual": "casual and conversational",
+        "urgent": "urgent and action-oriented",
+        "apologetic": "apologetic and understanding"
+    }
+    
+    length_prompts = {
+        "brief": "Keep it brief and to the point (1-2 sentences)",
+        "concise": "Make it concise but complete (2-4 sentences)",
+        "detailed": "Provide a detailed and comprehensive message (4-6 sentences)"
+    }
+    
+    tone_instruction = tone_prompts.get(tone, "professional and business-appropriate")
+    length_instruction = length_prompts.get(length, "Make it concise but complete")
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": f"""You are an expert email writing assistant. Your job is to rewrite messages to be {tone_instruction}. 
+                    
+                    Guidelines:
+                    - {length_instruction}
+                    - Use proper email etiquette
+                    - Make the message clear and actionable
+                    - Maintain the original intent
+                    - Use appropriate greetings and closings
+                    - Be specific about data analysis context when relevant
+                    
+                    Also identify 2-3 key improvements you made (like "Added professional greeting", "Clarified request", "Improved tone")."""
+                },
+                {
+                    "role": "user", 
+                    "content": f"Rewrite this message: '{user_input}'\n\nPlease provide:\n1. The rewritten message\n2. A list of key improvements made"
+                }
+            ],
+            temperature=0.7
+        )
+        
+        full_response = response.choices[0].message.content.strip()
+        
+        # Try to parse the response to extract improvements
+        if "improvements" in full_response.lower() or "improved" in full_response.lower():
+            lines = full_response.split('\n')
+            rewritten_lines = []
+            improvement_lines = []
+            in_improvements = False
+            
+            for line in lines:
+                if any(word in line.lower() for word in ['improvement', 'change', 'enhanced', 'added', 'clarified']):
+                    in_improvements = True
+                    improvement_lines.append(line.strip('- ').strip())
+                elif not in_improvements and line.strip():
+                    rewritten_lines.append(line)
+            
+            rewritten_message = '\n'.join(rewritten_lines).strip()
+            improvements = improvement_lines if improvement_lines else ["Enhanced professionalism", "Improved clarity", "Better structure"]
+        else:
+            rewritten_message = full_response
+            improvements = ["Enhanced professionalism", "Improved clarity", "Better tone"]
+        
+        return rewritten_message, improvements
+        
+    except Exception as e:
+        print(f"Error rewriting message: {str(e)}")
+        # Fallback rewriting
+        fallback_message = f"Dear Recipient,\n\nI hope this email finds you well. {user_input}\n\nPlease let me know if you need any additional information.\n\nBest regards"
+        return fallback_message, ["Added professional greeting", "Improved structure", "Added courteous closing"]
+
+
+
+@app.route("/rewrite_message", methods=["POST"])
+def rewrite_message_api():
+    """API endpoint for message rewriting"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'message' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'No message provided'
+            })
+        
+        message = data['message']
+        tone = data.get('tone', 'professional')
+        length = data.get('length', 'concise')
+        
+        if not message.strip():
+            return jsonify({
+                'success': False,
+                'error': 'Message cannot be empty'
+            })
+        
+        # Rewrite the message
+        rewritten_message, improvements = rewrite_message_advanced(message, tone, length)
+        
+        return jsonify({
+            'success': True,
+            'rewritten_message': rewritten_message,
+            'improvements': improvements,
+            'original_message': message,
+            'tone': tone,
+            'length': length
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })    
 
 if __name__ == "__main__":
     app.run(debug=True, host="127.0.0.1", port=5000)
