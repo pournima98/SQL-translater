@@ -193,7 +193,6 @@ def compose_email():
                 <div class="content">
                     {body.replace(chr(10), '<br>')}
                     
-                   
                     
                 
                 </div>
