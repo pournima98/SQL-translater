@@ -37,7 +37,10 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour session timeout
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-engine = create_engine("mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+#engine = create_engine("mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+
+db_url = os.getenv("DB_URL")
+engine = create_engine(db_url)
 
 # Google OAuth configuration
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
