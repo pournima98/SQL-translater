@@ -3,6 +3,7 @@
 
 
 # utils/charts.py
+# utils/charts.py
 import io
 import base64
 import matplotlib.pyplot as plt
@@ -402,19 +403,32 @@ class UniversalChartGenerator:
         y = df[y_col]
         
         if chart_type == 'bar':
-            bars = ax.bar(range(len(x)), y, color='steelblue', alpha=0.8, edgecolor='navy', linewidth=0.5)
-            ax.set_xticks(range(len(x)))
-            ax.set_xticklabels(x, rotation=45, ha='right')
+            # Always create proper bar chart with single bar for one result
+            if len(df) == 1:
+                # For single result, create a clean bar chart with proper spacing
+                bars = ax.bar([0], y, width=0.6, color='steelblue', alpha=0.8, edgecolor='navy', linewidth=2)
+                ax.set_xticks([0])
+                ax.set_xticklabels([str(x.iloc[0])], fontsize=11, fontweight='bold')
+                ax.set_xlim(-0.8, 0.8)  # Center the single bar
+            else:
+                bars = ax.bar(range(len(x)), y, color='steelblue', alpha=0.8, edgecolor='navy', linewidth=0.5)
+                ax.set_xticks(range(len(x)))
+                ax.set_xticklabels(x, rotation=45, ha='right')
             
             # Smart value labeling
-            for bar, value in zip(bars, y):
+            for i, (bar, value) in enumerate(zip(bars, y)):
                 height = bar.get_height()
                 if pd.api.types.is_numeric_dtype(df[y_col]):
                     label = f'{value:,.0f}' if value >= 1 else f'{value:.2f}'
                 else:
                     label = str(value)
                 ax.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
-                       label, ha='center', va='bottom', fontweight='bold', fontsize=9)
+                       label, ha='center', va='bottom', fontweight='bold', fontsize=10)
+            
+            # Better y-axis range for single bars
+            if len(df) == 1:
+                y_val = y.iloc[0]
+                ax.set_ylim(0, y_val * 1.2)  # Give some headroom above the bar
         
         elif chart_type == 'line':
             ax.plot(x, y, marker='o', linewidth=3, markersize=8, color='steelblue', markeredgecolor='navy')
@@ -535,8 +549,8 @@ def extract_question_from_sql(sql_query):
     sql_lower = sql_query.lower()
     
     # Look for common patterns in SQL to infer intent
-    if any(word in sql_lower for word in ['top', 'limit', 'order by', 'desc']):
-        return "Show top results"
+    if any(word in sql_lower for word in ['top', 'limit']) and any(word in sql_lower for word in ['order by', 'desc']):
+        return "Show top ranking results"  # This will trigger ranking intent
     elif 'group by' in sql_lower:
         return "Show breakdown by category"
     elif any(word in sql_lower for word in ['sum', 'count', 'avg', 'average']):

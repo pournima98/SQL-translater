@@ -1,366 +1,551 @@
-<!DOCTYPE html>
-<html>
+ <!--  -->
+   
+ <!DOCTYPE html>
+<html lang="en">
 <head>
-  <title>Compose Email with AI Rewrite</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-  <style>
-    .rewrite-section {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border-radius: 15px;
-      padding: 25px;
-      margin: 20px 0;
-      color: white;
-      box-shadow: 0 8px 25px rgba(0,0,0,0.1);
-    }
-    
-    .rewrite-btn {
-      background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
-      border: none;
-      color: white;
-      padding: 12px 30px;
-      border-radius: 25px;
-      font-weight: bold;
-      transition: all 0.3s ease;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-    }
-    
-    .rewrite-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(0,0,0,0.3);
-      color: white;
-    }
-    
-    .loading-spinner {
-      display: none;
-      width: 20px;
-      height: 20px;
-      border: 2px solid #ffffff;
-      border-top: 2px solid transparent;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    
-    .tone-selector {
-      background: rgba(255,255,255,0.1);
-      border: 1px solid rgba(255,255,255,0.3);
-      border-radius: 10px;
-      color: white;
-      padding: 8px 15px;
-    }
-    
-    .tone-selector option {
-      background: #444;
-      color: white;
-    }
-    
-    .original-message {
-      background: rgba(255,255,255,0.1);
-      border-left: 4px solid #FFD93D;
-      padding: 15px;
-      border-radius: 5px;
-      margin: 15px 0;
-    }
-    
-    .rewritten-message {
-      background: rgba(255,255,255,0.9);
-      color: #333;
-      border-left: 4px solid #4ECDC4;
-      padding: 15px;
-      border-radius: 5px;
-      margin: 15px 0;
-    }
-    
-    .improvement-badge {
-      background: #4ECDC4;
-      color: white;
-      padding: 5px 12px;
-      border-radius: 15px;
-      font-size: 0.8em;
-      margin: 2px;
-      display: inline-block;
-    }
-    
-    .word-count {
-      font-size: 0.9em;
-      opacity: 0.8;
-    }
-    
-    .copy-btn {
-      background: transparent;
-      border: 1px solid rgba(255,255,255,0.5);
-      color: white;
-      padding: 5px 15px;
-      border-radius: 15px;
-      font-size: 0.8em;
-      transition: all 0.3s ease;
-    }
-    
-    .copy-btn:hover {
-      background: rgba(255,255,255,0.2);
-      color: white;
-    }
-    
-    .email-preview {
-      background: #f8f9fa;
-      border: 1px solid #dee2e6;
-      border-radius: 10px;
-      padding: 20px;
-      margin: 20px 0;
-    }
-    
-    .form-control:focus {
-      border-color: #667eea;
-      box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
-    }
-  </style>
-</head>
-<body class="bg-light">
-  <div class="container mt-4">
-    <div class="row justify-content-center">
-      <div class="col-md-10">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compose Email - Data Analytics</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
         
-        <!-- Header -->
-        <div class="text-center mb-4">
-          <h2 class="text-primary">✉️ Smart Email Composer</h2>
-          <p class="text-muted">Write your message and let AI help you make it professional</p>
-        </div>
-
-        <!-- Gmail Status -->
-        <div class="alert alert-success mb-4">
-          ✅ Gmail is connected and ready to send emails!
-        </div>
-
-        <!-- Error Display -->
-        {% if error %}
-        <div class="alert alert-danger">{{ error }}</div>
-        {% endif %}
-
-        <!-- AI Rewrite Section -->
-        <div class="rewrite-section">
-          <h4 class="mb-3">🤖 AI Email Assistant</h4>
-          
-          <div class="row mb-3">
-            <div class="col-md-8">
-              <label class="form-label">Your Message:</label>
-              <textarea id="originalMessage" class="form-control" rows="4" 
-                        placeholder="Type your message here... (e.g., 'Please find the churn analysis data')"
-                        style="background: rgba(255,255,255,0.9); color: #333;"></textarea>
-              <small class="word-count">Word count: <span id="wordCount">0</span></small>
+        .email-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin: 2rem auto;
+            max-width: 800px;
+            overflow: hidden;
+        }
+        
+        .email-header {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+        
+        .email-header h2 {
+            margin: 0;
+            font-weight: 300;
+            font-size: 1.8rem;
+        }
+        
+        .email-header .subtitle {
+            opacity: 0.9;
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .email-body {
+            padding: 2rem;
+        }
+        
+        .form-floating label {
+            color: #6c757d;
+        }
+        
+        .form-control:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.25rem rgba(0, 123, 255, 0.15);
+        }
+        
+        .attachment-options {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            border-left: 4px solid #007bff;
+        }
+        
+        .attachment-options h6 {
+            color: #007bff;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+        }
+        
+        .attachment-options h6 i {
+            margin-right: 0.5rem;
+        }
+        
+        .form-check {
+            margin: 0.75rem 0;
+            padding: 0.5rem;
+            border-radius: 6px;
+            transition: background-color 0.2s;
+        }
+        
+        .form-check:hover {
+            background-color: rgba(0, 123, 255, 0.05);
+        }
+        
+        .form-check-input:checked {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        
+        .form-check-label {
+            font-weight: 500;
+            color: #495057;
+            display: flex;
+            align-items: center;
+        }
+        
+        .form-check-label i {
+            margin-right: 0.5rem;
+            width: 20px;
+            text-align: center;
+        }
+        
+        .feature-badge {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+        
+        .analysis-status {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            color: white;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+        }
+        
+        .analysis-status i {
+            font-size: 1.5rem;
+            margin-right: 0.75rem;
+        }
+        
+        .analysis-status.no-data {
+            background: linear-gradient(135deg, #ffc107, #fd7e14);
+        }
+        
+        .btn-send {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            border: none;
+            padding: 0.75rem 2rem;
+            border-radius: 25px;
+            color: white;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .btn-send:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4);
+            color: white;
+        }
+        
+        .btn-secondary {
+            border-radius: 25px;
+            padding: 0.75rem 2rem;
+        }
+        
+        .alert {
+            border-radius: 10px;
+            border: none;
+        }
+        
+        .alert-danger {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            color: white;
+        }
+        
+        .preview-section {
+            background: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+        
+        .disabled-option {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        
+        .tooltip-info {
+            cursor: help;
+            color: #6c757d;
+        }
+        
+        .ai-rewrite-section {
+            background: linear-gradient(135deg, #f8f9ff, #f0f4ff);
+            border: 1px solid #e3f2fd;
+            border-radius: 10px;
+            padding: 1rem;
+        }
+        
+        .ai-response-area .card {
+            border: 1px solid #28a745;
+            box-shadow: 0 2px 10px rgba(40, 167, 69, 0.1);
+        }
+        
+        .improvements-list {
+            font-size: 0.85rem;
+        }
+        
+        .improvement-item {
+            background: #e8f5e8;
+            color: #155724;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            display: inline-block;
+            margin: 0.2rem;
+            font-size: 0.75rem;
+        }
+        
+        .ai-rewrite-section h6 {
+            color: #4c63d2;
+            font-weight: 600;
+        }
+        
+        #rewriteBtn {
+            transition: all 0.3s;
+        }
+        
+        #rewriteBtn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 10px rgba(76, 99, 210, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="email-container">
+            <!-- Header -->
+            <div class="email-header">
+                <h2><i class="fas fa-paper-plane me-2"></i>Compose Data Report Email</h2>
+                <div class="subtitle">Share your analysis results with professional formatting</div>
             </div>
-            <div class="col-md-4">
-              <label class="form-label">Email Tone:</label>
-              <select id="emailTone" class="form-select tone-selector">
-                <option value="professional">Professional</option>
-                <option value="friendly">Friendly</option>
-                <option value="formal">Formal</option>
-                <option value="casual">Casual</option>
-                <option value="urgent">Urgent</option>
-                <option value="apologetic">Apologetic</option>
-              </select>
-              
-              <label class="form-label mt-3">Length:</label>
-              <select id="emailLength" class="form-select tone-selector">
-                <option value="concise">Concise</option>
-                <option value="detailed">Detailed</option>
-                <option value="brief">Brief</option>
-              </select>
-            </div>
-          </div>
-
-          <button id="rewriteBtn" class="rewrite-btn">
-            <span class="loading-spinner" id="loadingSpinner"></span>
-            ✨ Rewrite with AI
-          </button>
-          
-          <div id="rewrittenSection" style="display: none;">
-            <div class="rewritten-message">
-              <div class="d-flex justify-content-between align-items-center mb-2">
-                <strong>✨ AI Improved Version:</strong>
-                <button class="copy-btn" onclick="copyRewritten()">📋 Copy</button>
-              </div>
-              <div id="rewrittenText"></div>
-              <div class="mt-2">
-                <div id="improvements"></div>
-              </div>
-            </div>
-            <button class="btn btn-outline-light btn-sm mt-2" onclick="useRewritten()">
-              📝 Use This Version
-            </button>
-          </div>
-        </div>
-
-        <!-- Email Form -->
-        <form method="POST" id="emailForm">
-          <div class="row mb-3">
-            <div class="col-md-6">
-              <label class="form-label">To:</label>
-              <input type="email" name="to_email" class="form-control" required 
-                     value="{{ request.form.get('to_email', 'recipient@example.com') }}"
-                     placeholder="recipient@example.com">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Subject:</label>
-              <input type="text" name="subject" class="form-control" 
-                     value="{{ request.form.get('subject', 'Data Analysis Report') }}" required>
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Email Message:</label>
-            <textarea name="body" id="emailBody" class="form-control" rows="8" required>{{ rewritten_message or "Please find the analysis results below." }}</textarea>
-            <small class="form-text text-muted">This message will be formatted professionally in the email.</small>
-          </div>
-
-          <!-- Email Preview -->
-          <div class="email-preview">
-            <h6 class="text-primary">📧 Email Preview</h6>
-            <div class="border p-3 bg-white rounded">
-
-              
-              <div id="previewMessage" style="background: #f8f9fa; padding: 10px; border-left: 4px solid #007bff;">
-                {{ rewritten_message or "Please find the analysis results below." }}
-              </div>
-              
-              <div class="mt-3">
-                {% if analysis_summary %}
-                <div class="alert alert-info">
-                  ℹ️ Analysis data will be included in the email body
-                </div>
+            
+            <!-- Body -->
+            <div class="email-body">
+                <!-- Analysis Status -->
+                {% if has_analysis_data %}
+                    <div class="analysis-status">
+                        <i class="fas fa-chart-bar"></i>
+                        <div>
+                            <strong>Analysis Ready!</strong><br>
+                            <small>{{ analysis_summary }}</small>
+                        </div>
+                    </div>
                 {% else %}
-                <div class="alert alert-warning">
-                  ⚠️ No analysis data available. Run a query first to include data.
-                </div>
+                    <div class="analysis-status no-data">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <div>
+                            <strong>No Data Available</strong><br>
+                            <small>Please run a query first to generate charts and tables</small>
+                        </div>
+                    </div>
                 {% endif %}
                 
-                {% if chart_available %}
-                <div class="alert alert-success">
-                  📊 Chart attachment will be included
-                </div>
+                <!-- Error Display -->
+                {% if error %}
+                    <div class="alert alert-danger" role="alert">
+                        <i class="fas fa-exclamation-circle me-2"></i>{{ error }}
+                    </div>
                 {% endif %}
-              </div>
+                
+                <!-- Email Form -->
+                <form method="POST">
+                    <!-- Recipient -->
+                    <div class="form-floating mb-3">
+                        <input type="email" class="form-control" id="to_email" name="to_email" 
+                               placeholder="recipient@example.com" required>
+                        <label for="to_email"><i class="fas fa-envelope me-2"></i>To</label>
+                    </div>
+                    
+                    <!-- Subject -->
+                    <div class="form-floating mb-3">
+                        <input type="text" class="form-control" id="subject" name="subject" 
+                               placeholder="Email subject" value="Data Analysis Report - {{ 'Query Results' if has_analysis_data else 'Report' }}" required>
+                        <label for="subject"><i class="fas fa-tag me-2"></i>Subject</label>
+                    </div>
+                    
+                    <!-- Message Body with AI Rewrite -->
+                    <div class="mb-4">
+                        <div class="form-floating">
+                            <textarea class="form-control" id="body" name="body" 
+                                      placeholder="Your message here..." style="height: 150px;" required>{{ rewritten_message or 'Please find the analysis results below.' }}</textarea>
+                            <label for="body"><i class="fas fa-edit me-2"></i>Message</label>
+                        </div>
+                        
+                        <!-- AI Rewrite Section -->
+                        <div class="ai-rewrite-section mt-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0 text-primary">
+                                    <i class="fas fa-robot me-2"></i>AI Message Enhancement
+                                </h6>
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="rewriteBtn">
+                                    <i class="fas fa-magic me-1"></i>Rewrite Message
+                                </button>
+                            </div>
+                            
+                            <div class="row g-2 mb-3">
+                                <div class="col-md-6">
+                                    <select class="form-select form-select-sm" id="toneSelect">
+                                        <option value="professional">Professional</option>
+                                        <option value="friendly">Friendly</option>
+                                        <option value="formal">Formal</option>
+                                        <option value="casual">Casual</option>
+                                        <option value="urgent">Urgent</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <select class="form-select form-select-sm" id="lengthSelect">
+                                        <option value="brief">Brief</option>
+                                        <option value="concise" selected>Concise</option>
+                                        <option value="detailed">Detailed</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <!-- AI Response Area -->
+                            <div id="aiResponse" class="ai-response-area" style="display: none;">
+                                <div class="card">
+                                    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                                        <small class="text-muted">
+                                            <i class="fas fa-sparkles me-1"></i>AI Enhanced Version
+                                        </small>
+                                        <button type="button" class="btn btn-success btn-sm" id="useRewriteBtn">
+                                            <i class="fas fa-check me-1"></i>Use This
+                                        </button>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="rewrittenText" class="mb-2"></div>
+                                        <div id="improvements" class="improvements-list"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Loading State -->
+                            <div id="aiLoading" class="text-center py-3" style="display: none;">
+                                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                                <small class="text-muted">AI is enhancing your message...</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Attachment Options -->
+                    <div class="attachment-options">
+                        <h6><i class="fas fa-paperclip"></i>Include in Email</h6>
+                        
+                        <!-- Chart Option -->
+                        <div class="form-check {% if not chart_available %}disabled-option{% endif %}">
+                            <input class="form-check-input" type="checkbox" id="include_chart" name="include_chart" 
+                                   {% if not chart_available %}disabled{% endif %}>
+                            <label class="form-check-label" for="include_chart">
+                                <i class="fas fa-chart-bar text-primary"></i>
+                                Inline Chart Visualization
+                                {% if chart_available %}
+                                    <span class="feature-badge">Embedded</span>
+                                {% else %}
+                                    <i class="fas fa-info-circle tooltip-info ms-2" 
+                                       title="Run a query first to generate charts"></i>
+                                {% endif %}
+                            </label>
+                        </div>
+                        
+                        <!-- Table Option -->
+                        <div class="form-check {% if not table_available %}disabled-option{% endif %}">
+                            <input class="form-check-input" type="checkbox" id="include_table" name="include_table"
+                                   {% if not table_available %}disabled{% endif %}>
+                            <label class="form-check-label" for="include_table">
+                                <i class="fas fa-table text-success"></i>
+                                Inline Data Table
+                                {% if table_available %}
+                                    <span class="feature-badge">Formatted</span>
+                                {% else %}
+                                    <i class="fas fa-info-circle tooltip-info ms-2" 
+                                       title="Run a query first to generate tables"></i>
+                                {% endif %}
+                            </label>
+                        </div>
+                        
+                        <!-- Preview Section -->
+                        {% if chart_available or table_available %}
+                            <div class="preview-section mt-3">
+                                <small><i class="fas fa-eye me-2"></i><strong>Preview:</strong> 
+                                Selected content will be embedded directly in the email body with professional styling.</small>
+                            </div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Action Buttons -->
+                    <div class="d-flex justify-content-between align-items-center">
+                        <a href="{{ url_for('index') }}" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left me-2"></i>Back to Analysis
+                        </a>
+                        
+                        <button type="submit" class="btn btn-send">
+                            <i class="fas fa-paper-plane me-2"></i>Send Email
+                        </button>
+                    </div>
+                </form>
+                
+                <!-- Query Information -->
+                {% if query %}
+                    <div class="mt-4 p-3" style="background: #f8f9fa; border-radius: 8px; border-left: 4px solid #28a745;">
+                        <h6 class="text-success mb-2">
+                            <i class="fas fa-database me-2"></i>Current Query
+                        </h6>
+                        <code style="font-size: 0.85rem; color: #495057;">{{ query }}</code>
+                    </div>
+                {% endif %}
             </div>
-          </div>
-
-          <div class="d-flex gap-2 mt-4">
-            {% if analysis_summary %}
-            <button type="submit" class="btn btn-success btn-lg">📧 Send Email</button>
-            {% else %}
-            <button type="button" class="btn btn-secondary btn-lg" disabled>📧 Send Email</button>
-            <small class="text-muted ms-2">Run an analysis first to enable sending</small>
-            {% endif %}
-            <a href="/" class="btn btn-outline-primary btn-lg">🔍 New Analysis</a>
-          </div>
-        </form>
-
-        <!-- Quick Examples -->
-        <div class="mt-4 p-3 bg-white border rounded">
-          <h6>💡 Quick Examples:</h6>
-          <div class="d-flex gap-2 flex-wrap">
-            <button class="btn btn-sm btn-outline-secondary" onclick="setExample('Please find the churn analysis attached')">Basic Request</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="setExample('I need you to review the customer data urgently')">Urgent</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="setExample('Thanks for your patience, here is the analysis you requested')">Grateful</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="setExample('The churn insights show concerning trends')">Analytical</button>
-          </div>
         </div>
-      </div>
     </div>
-  </div>
-
-  <script>
-    // Word count functionality
-    document.getElementById('originalMessage').addEventListener('input', function() {
-      const wordCount = this.value.split(/\s+/).filter(word => word.length > 0).length;
-      document.getElementById('wordCount').textContent = wordCount;
-    });
-
-    // Email body preview update
-    document.getElementById('emailBody').addEventListener('input', function() {
-      document.getElementById('previewMessage').textContent = this.value;
-    });
-
-    // Set example messages
-    function setExample(text) {
-      document.getElementById('originalMessage').value = text;
-      document.getElementById('originalMessage').dispatchEvent(new Event('input'));
-    }
-
-    // AI Rewrite functionality
-    document.getElementById('rewriteBtn').addEventListener('click', async function() {
-      const originalText = document.getElementById('originalMessage').value.trim();
-      
-      if (!originalText) {
-        alert('Please enter a message to rewrite');
-        return;
-      }
-
-      const tone = document.getElementById('emailTone').value;
-      const length = document.getElementById('emailLength').value;
-      
-      // Show loading
-      document.getElementById('loadingSpinner').style.display = 'inline-block';
-      this.disabled = true;
-      this.innerHTML = '<span class="loading-spinner" style="display: inline-block;"></span> Rewriting...';
-
-      try {
-        const response = await fetch('/rewrite_message', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: originalText,
-            tone: tone,
-            length: length
-          })
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Initialize tooltips
+        document.addEventListener('DOMContentLoaded', function() {
+            // Simple tooltip functionality
+            document.querySelectorAll('.tooltip-info').forEach(function(element) {
+                element.addEventListener('mouseenter', function() {
+                    const tooltip = document.createElement('div');
+                    tooltip.className = 'tooltip-custom';
+                    tooltip.textContent = this.getAttribute('title');
+                    tooltip.style.cssText = `
+                        position: absolute;
+                        background: #333;
+                        color: white;
+                        padding: 5px 8px;
+                        border-radius: 4px;
+                        font-size: 0.8rem;
+                        z-index: 1000;
+                        max-width: 200px;
+                        word-wrap: break-word;
+                    `;
+                    document.body.appendChild(tooltip);
+                    
+                    const rect = this.getBoundingClientRect();
+                    tooltip.style.left = (rect.left + window.scrollX) + 'px';
+                    tooltip.style.top = (rect.top + window.scrollY - tooltip.offsetHeight - 5) + 'px';
+                    
+                    this._tooltip = tooltip;
+                });
+                
+                element.addEventListener('mouseleave', function() {
+                    if (this._tooltip) {
+                        document.body.removeChild(this._tooltip);
+                        this._tooltip = null;
+                    }
+                });
+            });
+            
+            // Update preview when checkboxes change
+            const chartCheckbox = document.getElementById('include_chart');
+            const tableCheckbox = document.getElementById('include_table');
+            
+            function updatePreview() {
+                const preview = document.querySelector('.preview-section small');
+                if (preview) {
+                    let items = [];
+                    if (chartCheckbox && chartCheckbox.checked) items.push('Interactive Chart');
+                    if (tableCheckbox && tableCheckbox.checked) items.push('Data Table');
+                    
+                    if (items.length > 0) {
+                        preview.innerHTML = `<i class="fas fa-eye me-2"></i><strong>Preview:</strong> 
+                        ${items.join(' and ')} will be embedded directly in the email body with professional styling.`;
+                    }
+                }
+            }
+            
+            if (chartCheckbox) chartCheckbox.addEventListener('change', updatePreview);
+            if (tableCheckbox) tableCheckbox.addEventListener('change', updatePreview);
+            
+            // AI Rewrite functionality
+            const rewriteBtn = document.getElementById('rewriteBtn');
+            const bodyTextarea = document.getElementById('body');
+            const toneSelect = document.getElementById('toneSelect');
+            const lengthSelect = document.getElementById('lengthSelect');
+            const aiResponse = document.getElementById('aiResponse');
+            const aiLoading = document.getElementById('aiLoading');
+            const useRewriteBtn = document.getElementById('useRewriteBtn');
+            const rewrittenText = document.getElementById('rewrittenText');
+            const improvements = document.getElementById('improvements');
+            
+            rewriteBtn.addEventListener('click', async function() {
+                const message = bodyTextarea.value.trim();
+                if (!message) {
+                    alert('Please enter a message first');
+                    return;
+                }
+                
+                const tone = toneSelect.value;
+                const length = lengthSelect.value;
+                
+                // Show loading
+                aiLoading.style.display = 'block';
+                aiResponse.style.display = 'none';
+                rewriteBtn.disabled = true;
+                
+                try {
+                    const response = await fetch('/rewrite_message', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            message: message,
+                            tone: tone,
+                            length: length
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        // Show the rewritten version
+                        rewrittenText.innerHTML = data.rewritten_message.replace(/\n/g, '<br>');
+                        
+                        // Show improvements
+                        improvements.innerHTML = data.improvements.map(imp => 
+                            `<span class="improvement-item"><i class="fas fa-check me-1"></i>${imp}</span>`
+                        ).join('');
+                        
+                        aiResponse.style.display = 'block';
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                } catch (error) {
+                    alert('Network error: ' + error.message);
+                } finally {
+                    aiLoading.style.display = 'none';
+                    rewriteBtn.disabled = false;
+                }
+            });
+            
+            useRewriteBtn.addEventListener('click', function() {
+                const newText = rewrittenText.textContent || rewrittenText.innerText;
+                bodyTextarea.value = newText;
+                aiResponse.style.display = 'none';
+                
+                // Visual feedback
+                bodyTextarea.style.backgroundColor = '#e8f5e8';
+                setTimeout(() => {
+                    bodyTextarea.style.backgroundColor = '';
+                }, 1000);
+            });
         });
-
-        const data = await response.json();
-        
-        if (data.success) {
-          document.getElementById('rewrittenText').innerHTML = data.rewritten_message;
-          document.getElementById('improvements').innerHTML = data.improvements.map(imp => 
-            `<span class="improvement-badge">${imp}</span>`
-          ).join('');
-          document.getElementById('rewrittenSection').style.display = 'block';
-        } else {
-          alert('Error: ' + data.error);
-        }
-      } catch (error) {
-        alert('Error rewriting message: ' + error.message);
-      } finally {
-        // Hide loading
-        document.getElementById('loadingSpinner').style.display = 'none';
-        this.disabled = false;
-        this.innerHTML = '✨ Rewrite with AI';
-      }
-    });
-
-    // Copy rewritten text
-    function copyRewritten() {
-      const text = document.getElementById('rewrittenText').textContent;
-      navigator.clipboard.writeText(text).then(() => {
-        const btn = event.target;
-        const originalText = btn.textContent;
-        btn.textContent = '✅ Copied!';
-        setTimeout(() => {
-          btn.textContent = originalText;
-        }, 2000);
-      });
-    }
-
-    // Use rewritten version
-    function useRewritten() {
-      const rewrittenText = document.getElementById('rewrittenText').textContent;
-      document.getElementById('emailBody').value = rewrittenText;
-      document.getElementById('previewMessage').textContent = rewrittenText;
-    }
-  </script>
-
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    </script>
 </body>
 </html>
