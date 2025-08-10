@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Compose Email with AI Rewrite</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <style>
+    .rewrite-section {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 15px;
+      padding: 25px;
+      margin: 20px 0;
+      color: white;
+      box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    }
+    
+    .rewrite-btn {
+      background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+      border: none;
+      color: white;
+      padding: 12px 30px;
+      border-radius: 25px;
+      font-weight: bold;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+    
+    .rewrite-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+      color: white;
+    }
+    
+    .loading-spinner {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 2px solid #ffffff;
+      border-top: 2px solid transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .tone-selector {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 10px;
+      color: white;
+      padding: 8px 15px;
+    }
+    
+    .tone-selector option {
+      background: #444;
+      color: white;
+    }
+    
+    .original-message {
+      background: rgba(255,255,255,0.1);
+      border-left: 4px solid #FFD93D;
+      padding: 15px;
+      border-radius: 5px;
+      margin: 15px 0;
+    }
+    
+    .rewritten-message {
+      background: rgba(255,255,255,0.9);
+      color: #333;
+      border-left: 4px solid #4ECDC4;
+      padding: 15px;
+      border-radius: 5px;
+      margin: 15px 0;
+    }
+    
+    .improvement-badge {
+      background: #4ECDC4;
+      color: white;
+      padding: 5px 12px;
+      border-radius: 15px;
+      font-size: 0.8em;
+      margin: 2px;
+      display: inline-block;
+    }
+    
+    .word-count {
+      font-size: 0.9em;
+      opacity: 0.8;
+    }
+    
+    .copy-btn {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.5);
+      color: white;
+      padding: 5px 15px;
+      border-radius: 15px;
+      font-size: 0.8em;
+      transition: all 0.3s ease;
+    }
+    
+    .copy-btn:hover {
+      background: rgba(255,255,255,0.2);
+      color: white;
+    }
+    
+    .email-preview {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 10px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    
+    .form-control:focus {
+      border-color: #667eea;
+      box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+    }
+  </style>
+</head>
+<body class="bg-light">
+  <div class="container mt-4">
+    <div class="row justify-content-center">
+      <div class="col-md-10">
+        
+        <!-- Header -->
+        <div class="text-center mb-4">
+          <h2 class="text-primary">✉️ Smart Email Composer</h2>
+          <p class="text-muted">Write your message and let AI help you make it professional</p>
+        </div>
+
+        <!-- Gmail Status -->
+        <div class="alert alert-success mb-4">
+          ✅ Gmail is connected and ready to send emails!
+        </div>
+
+        <!-- Error Display -->
+        {% if error %}
+        <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <!-- AI Rewrite Section -->
+        <div class="rewrite-section">
+          <h4 class="mb-3">🤖 AI Email Assistant</h4>
+          
+          <div class="row mb-3">
+            <div class="col-md-8">
+              <label class="form-label">Your Message:</label>
+              <textarea id="originalMessage" class="form-control" rows="4" 
+                        placeholder="Type your message here... (e.g., 'Please find the churn analysis data')"
+                        style="background: rgba(255,255,255,0.9); color: #333;"></textarea>
+              <small class="word-count">Word count: <span id="wordCount">0</span></small>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Email Tone:</label>
+              <select id="emailTone" class="form-select tone-selector">
+                <option value="professional">Professional</option>
+                <option value="friendly">Friendly</option>
+                <option value="formal">Formal</option>
+                <option value="casual">Casual</option>
+                <option value="urgent">Urgent</option>
+                <option value="apologetic">Apologetic</option>
+              </select>
+              
+              <label class="form-label mt-3">Length:</label>
+              <select id="emailLength" class="form-select tone-selector">
+                <option value="concise">Concise</option>
+                <option value="detailed">Detailed</option>
+                <option value="brief">Brief</option>
+              </select>
+            </div>
+          </div>
+
+          <button id="rewriteBtn" class="rewrite-btn">
+            <span class="loading-spinner" id="loadingSpinner"></span>
+            ✨ Rewrite with AI
+          </button>
+          
+          <div id="rewrittenSection" style="display: none;">
+            <div class="rewritten-message">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>✨ AI Improved Version:</strong>
+                <button class="copy-btn" onclick="copyRewritten()">📋 Copy</button>
+              </div>
+              <div id="rewrittenText"></div>
+              <div class="mt-2">
+                <div id="improvements"></div>
+              </div>
+            </div>
+            <button class="btn btn-outline-light btn-sm mt-2" onclick="useRewritten()">
+              📝 Use This Version
+            </button>
+          </div>
+        </div>
+
+        <!-- Email Form -->
+        <form method="POST" id="emailForm">
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label class="form-label">To:</label>
+              <input type="email" name="to_email" class="form-control" required 
+                     value="{{ request.form.get('to_email', 'recipient@example.com') }}"
+                     placeholder="recipient@example.com">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Subject:</label>
+              <input type="text" name="subject" class="form-control" 
+                     value="{{ request.form.get('subject', 'Data Analysis Report') }}" required>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Email Message:</label>
+            <textarea name="body" id="emailBody" class="form-control" rows="8" required>{{ rewritten_message or "Please find the analysis results below." }}</textarea>
+            <small class="form-text text-muted">This message will be formatted professionally in the email.</small>
+          </div>
+
+          <!-- Email Preview -->
+          <div class="email-preview">
+            <h6 class="text-primary">📧 Email Preview</h6>
+            <div class="border p-3 bg-white rounded">
+
+              
+              <div id="previewMessage" style="background: #f8f9fa; padding: 10px; border-left: 4px solid #007bff;">
+                {{ rewritten_message or "Please find the analysis results below." }}
+              </div>
+              
+              <div class="mt-3">
+                {% if analysis_summary %}
+                <div class="alert alert-info">
+                  ℹ️ Analysis data will be included in the email body
+                </div>
+                {% else %}
+                <div class="alert alert-warning">
+                  ⚠️ No analysis data available. Run a query first to include data.
+                </div>
+                {% endif %}
+                
+                {% if chart_available %}
+                <div class="alert alert-success">
+                  📊 Chart attachment will be included
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="d-flex gap-2 mt-4">
+            {% if analysis_summary %}
+            <button type="submit" class="btn btn-success btn-lg">📧 Send Email</button>
+            {% else %}
+            <button type="button" class="btn btn-secondary btn-lg" disabled>📧 Send Email</button>
+            <small class="text-muted ms-2">Run an analysis first to enable sending</small>
+            {% endif %}
+            <a href="/" class="btn btn-outline-primary btn-lg">🔍 New Analysis</a>
+          </div>
+        </form>
+
+        <!-- Quick Examples -->
+        <div class="mt-4 p-3 bg-white border rounded">
+          <h6>💡 Quick Examples:</h6>
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-sm btn-outline-secondary" onclick="setExample('Please find the churn analysis attached')">Basic Request</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="setExample('I need you to review the customer data urgently')">Urgent</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="setExample('Thanks for your patience, here is the analysis you requested')">Grateful</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="setExample('The churn insights show concerning trends')">Analytical</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Word count functionality
+    document.getElementById('originalMessage').addEventListener('input', function() {
+      const wordCount = this.value.split(/\s+/).filter(word => word.length > 0).length;
+      document.getElementById('wordCount').textContent = wordCount;
+    });
+
+    // Email body preview update
+    document.getElementById('emailBody').addEventListener('input', function() {
+      document.getElementById('previewMessage').textContent = this.value;
+    });
+
+    // Set example messages
+    function setExample(text) {
+      document.getElementById('originalMessage').value = text;
+      document.getElementById('originalMessage').dispatchEvent(new Event('input'));
+    }
+
+    // AI Rewrite functionality
+    document.getElementById('rewriteBtn').addEventListener('click', async function() {
+      const originalText = document.getElementById('originalMessage').value.trim();
+      
+      if (!originalText) {
+        alert('Please enter a message to rewrite');
+        return;
+      }
+
+      const tone = document.getElementById('emailTone').value;
+      const length = document.getElementById('emailLength').value;
+      
+      // Show loading
+      document.getElementById('loadingSpinner').style.display = 'inline-block';
+      this.disabled = true;
+      this.innerHTML = '<span class="loading-spinner" style="display: inline-block;"></span> Rewriting...';
+
+      try {
+        const response = await fetch('/rewrite_message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: originalText,
+            tone: tone,
+            length: length
+          })
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          document.getElementById('rewrittenText').innerHTML = data.rewritten_message;
+          document.getElementById('improvements').innerHTML = data.improvements.map(imp => 
+            `<span class="improvement-badge">${imp}</span>`
+          ).join('');
+          document.getElementById('rewrittenSection').style.display = 'block';
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (error) {
+        alert('Error rewriting message: ' + error.message);
+      } finally {
+        // Hide loading
+        document.getElementById('loadingSpinner').style.display = 'none';
+        this.disabled = false;
+        this.innerHTML = '✨ Rewrite with AI';
+      }
+    });
+
+    // Copy rewritten text
+    function copyRewritten() {
+      const text = document.getElementById('rewrittenText').textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = '✅ Copied!';
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 2000);
+      });
+    }
+
+    // Use rewritten version
+    function useRewritten() {
+      const rewrittenText = document.getElementById('rewrittenText').textContent;
+      document.getElementById('emailBody').value = rewrittenText;
+      document.getElementById('previewMessage').textContent = rewrittenText;
+    }
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

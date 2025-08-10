@@ -11,3 +11,6 @@ flask
 langchain
 python-dotenv
 jinja2
+google-auth 
+google-auth-oauthlib 
+google-api-python-client
