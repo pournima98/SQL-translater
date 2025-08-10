@@ -245,13 +245,13 @@ def compose_email():
             email_content_parts = [body.replace('\n', '<br>')]
             
             # Add query info if available
-            if query:
-                email_content_parts.append(f"""
-                <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-left: 4px solid #007bff; border-radius: 5px;">
-                    <h6 style="color: #007bff; margin: 0 0 10px 0;">📊 Analysis Query:</h6>
-                    <code style="font-size: 0.9em; color: #333;">{query}</code>
-                </div>
-                """)
+            # if query:
+            #     email_content_parts.append(f"""
+            #     <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-left: 4px solid #007bff; border-radius: 5px;">
+            #         <h6 style="color: #007bff; margin: 0 0 10px 0;">📊 Analysis Query:</h6>
+            #         <code style="font-size: 0.9em; color: #333;">{query}</code>
+            #     </div>
+            #     """)
             
             # Create HTML email
             simple_html = f'''<!DOCTYPE html>
@@ -269,10 +269,7 @@ def compose_email():
                 <div class="content">
                     {''.join(email_content_parts)}
                     
-                    <div class="signature">
-                        <p><strong>Best regards,</strong><br>
-                        Data Analytics Team</p>
-                    </div>
+
                 </div>
             </body>
             </html>'''
