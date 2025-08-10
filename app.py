@@ -146,42 +146,40 @@ def index():
                                  is_authenticated=is_authenticated)
         
         try:
-            # CRITICAL: Clean session BEFORE adding new data
             clean_session_data()
             
-            # Generate query and results
-            query = generate_sql_from_question(question)
-            df = pd.read_sql(query, engine)
-            result = df.to_html(classes="table table-bordered", index=False)
+            # Generate query with validation
+            query_result = generate_sql_from_question(question)
             
-            # Generate chart fresh (don't store in session!)
-            try:
-                chart_data_uri = generate_chart_base64(query, engine)
-                print("✅ Chart generated successfully")
-            except Exception as e:
-                print(f"❌ Chart generation failed: {str(e)}")
+            # Check if it's an error message (not SQL)
+            if query_result.startswith('❌') or 'not available' in query_result.lower():
+                # Return the validation error message
+                result = f"<div class='alert alert-warning'>{query_result.replace(chr(10), '<br>')}</div>"
+                query = None  # No SQL to show
                 chart_data_uri = None
-            
-            # Store ONLY the query (minimal data)
-            session['query'] = query
-            session['has_chart'] = chart_data_uri is not None
-            
-            # Monitor session size
-            session_size = get_session_size()
-            print(f"Session size after query: {session_size} bytes")
-            
-            if session_size > 3000:
-                print("⚠️ WARNING: Session size is getting large!")
-                clean_session_data()
+                
+            else:
+                # It's valid SQL - proceed normally
+                query = query_result
+                df = pd.read_sql(query, engine)
+                result = df.to_html(classes="table table-bordered", index=False)
+                
+                # Generate chart
+                try:
+                    chart_data_uri = generate_chart_base64(query, engine)
+                    print("✅ Chart generated successfully")
+                except Exception as e:
+                    print(f"❌ Chart generation failed: {str(e)}")
+                    chart_data_uri = None
+                
                 session['query'] = query
                 session['has_chart'] = chart_data_uri is not None
             
         except Exception as e:
-            result = f"<p style='color:red;'>Error: {str(e)}</p>"
+            result = f"<div class='alert alert-danger'>Error: {str(e)}</div>"
 
     return render_template("index.html", result=result, query=query, 
                          chart_path=chart_data_uri, is_authenticated=is_authenticated)
-
 
 
 def send_email(subject, body, to_email, chart_image_bytes=None, table_html=None):

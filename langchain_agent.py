@@ -3,8 +3,8 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 import openai
 import pandas as pd
-from sqlalchemy import create_engine
-from typing import Dict, List, Tuple, Optional
+from sqlalchemy import create_engine, inspect
+from typing import Dict, List, Tuple, Optional, Set
 import re
 
 # Try to import AI models - graceful fallback if not available
@@ -29,357 +29,477 @@ except:
 openai.api_key = os.getenv("OPENAI_API_KEY")
 llm = ChatOpenAI(temperature=0)
 
-# Global caches for performance
+# Global caches
 schema_cache = {}
 value_cache = {}
+actual_schema = {}
 cache_initialized = False
-
-# Basic schema matching your existing database
-basic_schema = """
-You have access to the following MySQL schema:
-customers(customer_id, name, signup_date, plan_id, region_id)
-subscriptions(subscription_id, customer_id, start_date, end_date, is_active)
-usage(customer_id, date, logins, sessions, features_used)
-support_tickets(ticket_id, customer_id, category, resolved, time_to_resolve)
-payments(payment_id, customer_id, amount, status, payment_date)
-plans(plan_id, plan_name, price, features)
-regions(region_id, region_name)
-
-RELATIONSHIPS:
-- customers.region_id → regions.region_id
-- customers.plan_id → plans.plan_id
-- Other tables link to customers via customer_id
-"""
 
 def get_database_engine():
     """Get database engine - matches your app.py configuration"""
-    return create_engine("mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+    db_url = os.getenv("DB_URL", "mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+    return create_engine(db_url)
 
-def initialize_ai_cache():
-    """Load actual values from your existing tables for smart matching"""
-    global schema_cache, value_cache, cache_initialized
+def load_actual_database_schema():
+    """Load the ACTUAL database schema and available columns"""
+    global actual_schema, cache_initialized
     
     if cache_initialized:
-        return
+        return actual_schema
     
     try:
         engine = get_database_engine()
+        inspector = inspect(engine)
         
-        # Load actual region names from your regions table
-        print("🔍 Loading actual data from your database...")
+        actual_schema = {
+            'tables': {},
+            'all_columns': set(),
+            'relationships': {},
+            'available_fields': set()
+        }
         
+        print("🔍 Loading ACTUAL database schema...")
+        
+        # Get all tables and their columns
+        for table_name in inspector.get_table_names():
+            columns = inspector.get_columns(table_name)
+            column_names = [col['name'] for col in columns]
+            actual_schema['tables'][table_name] = column_names
+            actual_schema['all_columns'].update(column_names)
+            
+            print(f"✅ {table_name}: {', '.join(column_names)}")
+        
+        # Build available fields list (what users can actually query for)
+        for table, columns in actual_schema['tables'].items():
+            for column in columns:
+                actual_schema['available_fields'].add(column.lower())
+        
+        # Load sample values for validation
+        load_sample_values(engine)
+        
+        cache_initialized = True
+        print(f"🎯 Schema loaded: {len(actual_schema['tables'])} tables, {len(actual_schema['all_columns'])} total columns")
+        return actual_schema
+        
+    except Exception as e:
+        print(f"⚠️ Could not load database schema: {e}")
+        return {}
+
+def load_sample_values(engine):
+    """Load sample values from tables for entity matching"""
+    global value_cache
+    
+    try:
+        # Load regions
         regions_df = pd.read_sql("SELECT region_id, region_name FROM regions", engine)
         if not regions_df.empty:
             value_cache['regions'] = {
-                'region_name': regions_df['region_name'].tolist()
+                'region_name': regions_df['region_name'].tolist(),
+                'all_values': regions_df['region_name'].str.lower().tolist()
             }
-            print(f"✅ Loaded {len(regions_df)} regions: {', '.join(regions_df['region_name'].tolist())}")
         
-        # Load plan names if plans table exists
-        try:
-            plans_df = pd.read_sql("SELECT plan_id, plan_name FROM plans LIMIT 10", engine)
-            if not plans_df.empty:
-                value_cache['plans'] = {
-                    'plan_name': plans_df['plan_name'].tolist()
-                }
-                print(f"✅ Loaded plans: {', '.join(plans_df['plan_name'].tolist())}")
-        except:
-            print("ℹ️ Plans table not found or empty")
+        # Load plans
+        plans_df = pd.read_sql("SELECT plan_id, plan_name FROM plans", engine)
+        if not plans_df.empty:
+            value_cache['plans'] = {
+                'plan_name': plans_df['plan_name'].tolist(),
+                'all_values': plans_df['plan_name'].str.lower().tolist()
+            }
         
-        # Load sample customer names
+        # Load support categories
         try:
-            customers_df = pd.read_sql("SELECT DISTINCT name FROM customers LIMIT 20", engine)
-            if not customers_df.empty:
-                value_cache['customers'] = {
-                    'name': customers_df['name'].tolist()
+            categories_df = pd.read_sql("SELECT DISTINCT category FROM support_tickets LIMIT 20", engine)
+            if not categories_df.empty:
+                value_cache['categories'] = {
+                    'category': categories_df['category'].tolist(),
+                    'all_values': categories_df['category'].str.lower().tolist()
                 }
-                print(f"✅ Loaded {len(customers_df)} customer names")
         except:
-            print("ℹ️ Could not load customer names")
-            
-        cache_initialized = True
-        print("🎯 AI cache initialized with your actual data")
+            pass
+        
+        print("✅ Sample values loaded for validation")
         
     except Exception as e:
-        print(f"⚠️ Could not initialize AI cache: {e}")
+        print(f"⚠️ Could not load sample values: {e}")
 
-def extract_entities_with_ai(question: str) -> Dict:
-    """Extract entities using AI models"""
-    if not spacy_available:
-        return extract_entities_simple(question)
+def extract_requested_fields_from_question(question: str) -> Set[str]:
+    """Extract what data fields the user is asking for"""
     
-    try:
-        doc = nlp(question)
-        
-        entities = {
-            'PERSON': [],
-            'ORG': [],
-            'GPE': [],  # Geographic/Political entities (regions, countries)
-            'LOC': [],  # Locations
-            'MONEY': [],
-            'DATE': [],
-            'CARDINAL': [],  # Numbers
-            'ORDINAL': []    # First, second, top, etc.
-        }
-        
-        for ent in doc.ents:
-            if ent.label_ in entities:
-                entities[ent.label_].append(ent.text.strip())
-        
-        # Add pattern-based extraction for entities AI might miss
-        potential_entities = extract_entities_patterns(question)
-        
-        return {
-            'spacy_entities': entities,
-            'potential_entities': potential_entities,
-            'has_ai': True
-        }
-        
-    except Exception as e:
-        print(f"AI entity extraction failed: {e}")
-        return extract_entities_simple(question)
-
-def extract_entities_simple(question: str) -> Dict:
-    """Simple pattern-based entity extraction (fallback)"""
-    potential_entities = extract_entities_patterns(question)
-    
-    return {
-        'spacy_entities': {'GPE': potential_entities},
-        'potential_entities': potential_entities,
-        'has_ai': False
+    # Common field patterns users might ask for
+    field_patterns = {
+        r'\bemail\b': 'email',
+        r'\be-mail\b': 'email',
+        r'\bphone\b': 'phone',
+        r'\btelephone\b': 'phone', 
+        r'\bmobile\b': 'phone',
+        r'\baddress\b': 'address',
+        r'\bstreet\b': 'address',
+        r'\bcity\b': 'city',
+        r'\bstate\b': 'state',
+        r'\bzipcode\b': 'zipcode',
+        r'\bzip\b': 'zipcode',
+        r'\bpostal\b': 'zipcode',
+        r'\bage\b': 'age',
+        r'\bgender\b': 'gender',
+        r'\bsex\b': 'gender',
+        r'\bbirthdate\b': 'birthdate',
+        r'\bbirthday\b': 'birthdate',
+        r'\bdob\b': 'birthdate',
+        r'\bproduct\b': 'product_name',
+        r'\bitem\b': 'product_name',
+        r'\bskus?\b': 'sku',
+        r'\bcategory\b': 'category',
+        r'\bdepartment\b': 'department',
+        r'\bbrand\b': 'brand',
+        r'\bcompany\b': 'company',
+        r'\borganization\b': 'company',
+        r'\bjob\s+title\b': 'job_title',
+        r'\bposition\b': 'job_title',
+        r'\brole\b': 'job_title',
+        r'\bsalary\b': 'salary',
+        r'\bincome\b': 'salary',
+        r'\bwage\b': 'salary',
+        r'\bwebsite\b': 'website',
+        r'\burl\b': 'website',
+        r'\bsocial\b': 'social_media',
+        r'\btwitter\b': 'social_media',
+        r'\bfacebook\b': 'social_media',
+        r'\blinkedin\b': 'social_media',
+        r'\bnotes\b': 'notes',
+        r'\bcomments\b': 'comments',
+        r'\bdescription\b': 'description',
+        r'\btags\b': 'tags',
+        r'\blabels\b': 'labels',
+        r'\bstatus\b': 'status',  # This might exist
+        r'\bpriority\b': 'priority',
+        r'\brating\b': 'rating',
+        r'\bscore\b': 'score',
+        r'\breview\b': 'review',
+        r'\bfeedback\b': 'feedback'
     }
+    
+    requested_fields = set()
+    question_lower = question.lower()
+    
+    # Check for field patterns
+    for pattern, field_name in field_patterns.items():
+        if re.search(pattern, question_lower):
+            requested_fields.add(field_name)
+    
+    # Also check for direct column name mentions
+    if actual_schema:
+        for column in actual_schema['available_fields']:
+            if column in question_lower:
+                requested_fields.add(column)
+    
+    return requested_fields
 
-def extract_entities_patterns(question: str) -> List[str]:
-    """Extract entities using regex patterns"""
-    patterns = [
-        r'\bin\s+([A-Z][a-zA-Z\s]+?)(?:\s|$|,|\?)',      # "in Europe"
-        r'([A-Z][a-zA-Z\s]+?)\s+customers',              # "Europe customers"  
-        r'from\s+([A-Z][a-zA-Z\s]+?)(?:\s|$|,|\?)',      # "from Asia"
-        r'([A-Z][a-zA-Z\s]+?)\s+region',                 # "Europe region"
-        r'([A-Z][a-zA-Z\s]+?)\s+plan',                   # "Premium plan"
-        r'with\s+([A-Z][a-zA-Z\s]+?)\s+plan',           # "with Premium plan"
+def validate_requested_fields(requested_fields: Set[str]) -> Dict[str, str]:
+    """Check if requested fields actually exist in the database"""
+    
+    if not actual_schema:
+        load_actual_database_schema()
+    
+    validation_results = {}
+    available_fields = actual_schema.get('available_fields', set())
+    
+    for field in requested_fields:
+        field_lower = field.lower()
+        
+        if field_lower in available_fields:
+            # Find which table(s) contain this field
+            tables_with_field = []
+            for table, columns in actual_schema['tables'].items():
+                if field_lower in [col.lower() for col in columns]:
+                    tables_with_field.append(table)
+            
+            validation_results[field] = f"✅ Available in: {', '.join(tables_with_field)}"
+        else:
+            # Suggest similar fields if available
+            similar_fields = find_similar_fields(field_lower, available_fields)
+            if similar_fields:
+                validation_results[field] = f"❌ '{field}' not available. Similar fields: {', '.join(similar_fields)}"
+            else:
+                validation_results[field] = f"❌ '{field}' not available in database"
+    
+    return validation_results
+
+def find_similar_fields(requested_field: str, available_fields: Set[str]) -> List[str]:
+    """Find similar field names in the database"""
+    similar = []
+    
+    # Simple similarity check
+    for field in available_fields:
+        if requested_field in field or field in requested_field:
+            similar.append(field)
+        elif abs(len(requested_field) - len(field)) <= 2:  # Similar length
+            # Simple character overlap check
+            overlap = len(set(requested_field) & set(field))
+            if overlap >= min(len(requested_field), len(field)) * 0.6:
+                similar.append(field)
+    
+    return similar[:3]  # Return top 3 similar fields
+
+def check_data_relationships(question: str) -> Optional[str]:
+    """Check for impossible relationships or granularities"""
+    
+    question_lower = question.lower()
+    
+    # Check for geographical granularity issues
+    geographic_issues = [
+        (r'\bcountr(y|ies)\b', "country", "regions (North America, Europe, Asia, etc.)"),
+        (r'\bcit(y|ies)\b', "city", "regions only"),
+        (r'\bstate\b', "state", "regions only"), 
+        (r'\bprovince\b', "province", "regions only"),
     ]
     
-    entities = []
-    for pattern in patterns:
-        matches = re.findall(pattern, question)
-        entities.extend([match.strip() for match in matches if len(match.strip()) > 1])
+    for pattern, requested, available in geographic_issues:
+        if re.search(pattern, question_lower):
+            actual_regions = value_cache.get('regions', {}).get('region_name', ['North America', 'Europe', 'Asia', 'Australia', 'South America'])
+            return f"❌ **{requested.title()} data not available**\n\nAvailable geographic data: {', '.join(actual_regions)}\n\n💡 Try: 'customers by region' or 'sales in Europe'"
     
-    return list(set(entities))
+    # Check for product-level data when no products exist
+    if not any('product' in table for table in actual_schema.get('tables', {})):
+        product_patterns = [r'\bproduct\b', r'\bitem\b', r'\bsku\b', r'\bcatalog\b']
+        for pattern in product_patterns:
+            if re.search(pattern, question_lower):
+                return f"❌ **Product data not available**\n\nThis database contains customer subscription data, not product sales.\n\n💡 Try: 'revenue by plan', 'customer payments', or 'subscription trends'"
+    
+    return None
 
-def find_semantic_matches(entity: str) -> List[Tuple[str, str, float, str]]:
-    """Find matches between entities and your actual database values"""
-    matches = []
-    entity_lower = entity.lower().strip()
+def create_comprehensive_validation_message(question: str) -> Optional[str]:
+    """Comprehensive validation of the entire question"""
     
-    if not value_cache:
-        return matches
+    # Load schema if not loaded
+    if not actual_schema:
+        load_actual_database_schema()
     
-    # Check against actual region names from your database
-    if 'regions' in value_cache and 'region_name' in value_cache['regions']:
-        for region_name in value_cache['regions']['region_name']:
-            region_lower = region_name.lower()
-            
-            # Exact match
-            if entity_lower == region_lower:
-                matches.append(('regions', 'region_name', 1.0, region_name))
-            # Partial match
-            elif entity_lower in region_lower or region_lower in entity_lower:
-                matches.append(('regions', 'region_name', 0.8, region_name))
+    # Extract what fields the user is asking for
+    requested_fields = extract_requested_fields_from_question(question)
     
-    # Check against plan names if available
-    if 'plans' in value_cache and 'plan_name' in value_cache['plans']:
-        for plan_name in value_cache['plans']['plan_name']:
-            plan_lower = plan_name.lower()
-            
-            if entity_lower == plan_lower:
-                matches.append(('plans', 'plan_name', 1.0, plan_name))
-            elif entity_lower in plan_lower or plan_lower in entity_lower:
-                matches.append(('plans', 'plan_name', 0.8, plan_name))
+    # Check for relationship/granularity issues first
+    relationship_issue = check_data_relationships(question)
+    if relationship_issue:
+        return relationship_issue
     
-    # Use AI semantic matching if available
-    if transformers_available and len(matches) == 0:
-        try:
-            matches.extend(find_ai_semantic_matches(entity))
-        except Exception as e:
-            print(f"AI semantic matching failed: {e}")
-    
-    # Sort by confidence
-    matches.sort(key=lambda x: x[2], reverse=True)
-    return matches[:3]  # Top 3 matches
-
-def find_ai_semantic_matches(entity: str) -> List[Tuple[str, str, float, str]]:
-    """Use AI for semantic matching when simple matching fails"""
-    matches = []
-    entity_embedding = sentence_model.encode([entity.lower()])
-    
-    for table, columns in value_cache.items():
-        for column, values in columns.items():
-            if not values:
-                continue
-                
-            try:
-                value_embeddings = sentence_model.encode([str(v).lower() for v in values])
-                similarities = np.dot(entity_embedding, value_embeddings.T)[0]
-                
-                for i, similarity in enumerate(similarities):
-                    if similarity > 0.7:  # High threshold for AI matches
-                        matches.append((table, column, similarity, values[i]))
-            except:
-                continue
-    
-    return matches
-
-def create_enhanced_schema(entities: Dict) -> str:
-    """Create enhanced schema with entity context from your actual data"""
-    schema_text = basic_schema
-    
-    # Collect all entities
-    all_entities = []
-    for ent_list in entities['spacy_entities'].values():
-        all_entities.extend(ent_list)
-    all_entities.extend(entities['potential_entities'])
-    
-    if all_entities:
-        schema_text += "\nDetected Entities and Matches in Your Database:\n"
+    # Validate requested fields
+    if requested_fields:
+        field_validation = validate_requested_fields(requested_fields)
+        invalid_fields = {field: msg for field, msg in field_validation.items() if "❌" in msg}
         
-        for entity in set(all_entities):
-            matches = find_semantic_matches(entity)
-            if matches:
-                schema_text += f"'{entity}' matches:\n"
-                for table, column, confidence, example in matches:
-                    schema_text += f"  - {table}.{column} = '{example}' (confidence: {confidence:.2f})\n"
+        if invalid_fields:
+            # Build comprehensive error message
+            available_tables = list(actual_schema['tables'].keys())
+            
+            error_msg = "❌ **Requested data not available in database**\n\n"
+            
+            # Show what's missing
+            error_msg += "**Missing fields:**\n"
+            for field, validation in invalid_fields.items():
+                error_msg += f"• {validation}\n"
+            
+            # Show what IS available  
+            error_msg += f"\n**Available tables:** {', '.join(available_tables)}\n"
+            
+            # Show sample available columns
+            if 'customers' in actual_schema['tables']:
+                customer_cols = actual_schema['tables']['customers']
+                error_msg += f"**Customer data available:** {', '.join(customer_cols)}\n"
+            
+            # Provide helpful suggestions
+            error_msg += "\n💡 **Try asking for:**\n"
+            error_msg += "• 'Top customers by revenue'\n"
+            error_msg += "• 'Customer distribution by region'\n" 
+            error_msg += "• 'Payment trends over time'\n"
+            error_msg += "• 'Support ticket analysis'\n"
+            
+            return error_msg
+    
+    return None
+
+def generate_enhanced_schema() -> str:
+    """Generate schema description with actual database structure"""
+    
+    if not actual_schema:
+        load_actual_database_schema()
+    
+    schema_text = "DATABASE SCHEMA (Actual Structure):\n\n"
+    
+    # Add actual table structures
+    for table_name, columns in actual_schema['tables'].items():
+        schema_text += f"{table_name}({', '.join(columns)})\n"
+    
+    schema_text += "\nRELATIONSHIPS:\n"
+    schema_text += "- customers.region_id → regions.region_id\n"
+    schema_text += "- customers.plan_id → plans.plan_id\n" 
+    schema_text += "- All other tables link to customers via customer_id\n"
+    
+    schema_text += "\nAVAILABLE DATA:\n"
+    if value_cache.get('regions'):
+        schema_text += f"- Regions: {', '.join(value_cache['regions']['region_name'])}\n"
+    if value_cache.get('plans'):
+        schema_text += f"- Plans: {', '.join(value_cache['plans']['plan_name'])}\n"
+    if value_cache.get('categories'):
+        schema_text += f"- Support Categories: {', '.join(value_cache['categories']['category'])}\n"
     
     return schema_text
 
 # Enhanced prompt template
 enhanced_prompt_template = PromptTemplate.from_template("""
-You are an expert SQL generator working with the user's actual database schema and data.
+You are an expert SQL generator working with this EXACT database schema:
 
 {schema}
 
-CRITICAL INSTRUCTIONS:
-1. Use the entity matches above to write correct JOINs
-2. When you see geographic entities (Europe, Asia, etc.), JOIN customers with regions table
-3. When you see plan-related entities, JOIN customers with plans table
-4. For "top N" queries, ORDER BY appropriate metrics (payments, usage) with LIMIT
-5. Use exact matching with the detected entity values
-6. Always use proper JOIN syntax
-7. For payment totals, consider filtering WHERE status = 'completed'
+CRITICAL RULES:
+1. ONLY use tables and columns that exist in the schema above
+2. For geographic queries, only use region-level data (North America, Europe, Asia, Australia, South America)
+3. For customer data, available fields are: customer_id, name, signup_date, plan_id, region_id
+4. For payment analysis, use the payments table with amount, status, payment_date
+5. Always JOIN customers with regions for geographic analysis
+6. Use proper SQL syntax with appropriate JOINs, WHERE clauses, and aggregations
 
-EXAMPLE PATTERNS:
-- "customers in Europe" → JOIN customers c WITH regions r ON c.region_id = r.region_id WHERE r.region_name = 'Europe'
-- "top 10 customers" → ORDER BY SUM(payment_amount) DESC LIMIT 10
-- "premium customers" → JOIN with plans table WHERE plan_name = 'Premium'
+EXAMPLES:
+✅ GOOD: "SELECT r.region_name, COUNT(c.customer_id) FROM customers c JOIN regions r ON c.region_id = r.region_id"
+❌ BAD: "SELECT email FROM customers" (email field doesn't exist)
 
 Question: {question}
 
-Generate only the MySQL query:
-""")
-
-# Fallback prompt
-simple_prompt_template = PromptTemplate.from_template("""
-Given the following schema:
-{schema}
-
-Important: When geographic terms like "Europe", "Asia" are mentioned, you need to:
-1. JOIN customers table with regions table  
-2. Match on regions.region_name = 'EntityName'
-
-Question: {question}
-
-SQL:
+Generate MySQL query:
 """)
 
 def generate_sql_from_question(question: str) -> str:
     """
-    Generate SQL using your actual database structure and values
+    Generate SQL with comprehensive validation against actual database schema
     """
     try:
-        # Initialize cache with your actual data
-        if not cache_initialized:
-            initialize_ai_cache()
+        print(f"🔍 Analyzing question: '{question}'")
         
-        # Extract entities (with or without AI)
-        entities = extract_entities_with_ai(question)
+        # Load actual database schema
+        if not actual_schema:
+            load_actual_database_schema()
         
-        # Create enhanced schema with your actual data
-        enhanced_schema = create_enhanced_schema(entities)
+        # Comprehensive validation check
+        validation_error = create_comprehensive_validation_message(question)
+        if validation_error:
+            print("🚫 Validation failed - returning error message")
+            return validation_error
         
-        # Choose prompt based on available features
-        if entities['has_ai'] or any(entities['spacy_entities'].values()) or entities['potential_entities']:
-            prompt = enhanced_prompt_template.format(
-                schema=enhanced_schema, 
-                question=question
-            )
-            print(f"🎯 Using enhanced generation with entity matches")
-        else:
-            prompt = simple_prompt_template.format(
-                schema=basic_schema,
-                question=question
-            )
-            print(f"📝 Using basic generation")
+        # Generate enhanced schema description
+        schema_description = generate_enhanced_schema()
         
-        # Generate SQL
+        # Generate SQL using the enhanced prompt
+        prompt = enhanced_prompt_template.format(
+            schema=schema_description,
+            question=question
+        )
+        
         response = llm.predict(prompt)
         sql_query = response.strip()
         
-        # Clean up response
+        # Clean up SQL response
         if sql_query.startswith('```'):
             lines = sql_query.split('\n')
             sql_query = '\n'.join([line for line in lines if not line.strip().startswith('```')])
             sql_query = sql_query.strip()
         
+        # Final validation: check if generated SQL uses non-existent columns
+        validation_issue = validate_generated_sql(sql_query)
+        if validation_issue:
+            return validation_issue
+        
+        print("✅ Valid SQL generated and validated")
         return sql_query
         
     except Exception as e:
         print(f"Error in SQL generation: {e}")
-        return f"-- Error generating SQL: {str(e)}"
+        return f"❌ **Error**: {str(e)}\n\nPlease try a simpler question or rephrase your query."
 
-# Debug function
-def debug_entity_extraction(question: str):
-    """Debug what the system detects in your database"""
-    print(f"\n🔍 Analyzing: '{question}'")
-    print("=" * 50)
+def validate_generated_sql(sql_query: str) -> Optional[str]:
+    """Final validation of generated SQL against actual schema"""
     
-    if not cache_initialized:
-        initialize_ai_cache()
+    if not sql_query or sql_query.startswith('❌'):
+        return None
+        
+    try:
+        # Simple check for non-existent column references
+        sql_lower = sql_query.lower()
+        
+        # Common non-existent columns that AI might hallucinate
+        problematic_columns = [
+            'email', 'phone', 'address', 'city', 'state', 'country', 
+            'product_name', 'product_id', 'age', 'gender', 'birthdate'
+        ]
+        
+        for col in problematic_columns:
+            if col in sql_lower:
+                available_cols = []
+                for table, columns in actual_schema['tables'].items():
+                    available_cols.extend([f"{table}.{c}" for c in columns])
+                
+                return f"❌ **Invalid SQL Generated**\n\nSQL contains non-existent column: '{col}'\n\n**Available columns:**\n{', '.join(available_cols[:20])}\n\nPlease rephrase your question."
+        
+        return None
+        
+    except Exception as e:
+        return f"❌ **SQL Validation Error**: {str(e)}"
+
+# Debug function for testing
+def debug_question_analysis(question: str):
+    """Debug comprehensive question analysis"""
+    print(f"\n🔍 ANALYZING: '{question}'")
+    print("=" * 70)
     
-    entities = extract_entities_with_ai(question)
+    # Load schema
+    if not actual_schema:
+        load_actual_database_schema()
     
-    print(f"AI Available: {entities['has_ai']}")
-    print(f"SpaCy Entities: {entities['spacy_entities']}")
-    print(f"Pattern Entities: {entities['potential_entities']}")
+    # Show what fields are being requested
+    requested_fields = extract_requested_fields_from_question(question)
+    print(f"📋 REQUESTED FIELDS: {requested_fields if requested_fields else 'None detected'}")
     
-    # Show what matches we find in your actual database
-    all_entities = []
-    for ent_list in entities['spacy_entities'].values():
-        all_entities.extend(ent_list)
-    all_entities.extend(entities['potential_entities'])
+    # Show field validation
+    if requested_fields:
+        field_validation = validate_requested_fields(requested_fields)
+        print(f"\n🔍 FIELD VALIDATION:")
+        for field, result in field_validation.items():
+            print(f"   {result}")
     
-    for entity in set(all_entities):
-        matches = find_semantic_matches(entity)
-        if matches:
-            print(f"\n🎯 '{entity}' matches in your database:")
-            for table, column, score, example in matches:
-                print(f"   {table}.{column} = '{example}' (confidence: {score:.2f})")
-        else:
-            print(f"\n❌ No matches found for '{entity}'")
+    # Check relationship issues
+    relationship_issue = check_data_relationships(question)
+    if relationship_issue:
+        print(f"\n🚫 RELATIONSHIP ISSUE:")
+        print(relationship_issue)
+    
+    # Show comprehensive validation
+    comprehensive_validation = create_comprehensive_validation_message(question)
+    if comprehensive_validation:
+        print(f"\n🚫 COMPREHENSIVE VALIDATION FAILED:")
+        print(comprehensive_validation)
+    else:
+        print(f"\n✅ VALIDATION PASSED - Question can be processed")
 
 if __name__ == "__main__":
-    # Test with your actual database
+    # Test with various problematic questions
     test_questions = [
-        "What are top 10 customers?",
-        "Top 10 customers in Europe", 
-        "How many customers in Asia?",
-        "Show me premium customers",
-        "Revenue by region"
+        "Give me email of customers",  # No email field
+        "Show me phone numbers of top customers",  # No phone field  
+        "Customer addresses in Europe",  # No address field
+        "What's the age of our customers?",  # No age field
+        "Top 10 countries in Europe",  # No country data, only regions
+        "Sales by city",  # No city data
+        "Product sales analysis",  # No products table
+        "Show customer gender distribution",  # No gender field
+        "What are customer job titles?",  # No job title field
+        "Top customers by revenue",  # This should work
+        "Customer distribution by region",  # This should work
+        "Payment trends over time"  # This should work
     ]
     
-    print("🧪 Testing with your actual database...")
+    print("🧪 Testing comprehensive validation system...")
     
     for question in test_questions:
-        debug_entity_extraction(question)
-        sql = generate_sql_from_question(question)
-        print(f"\n📝 Generated SQL:\n{sql}")
-        print("\n" + "="*60)
+        debug_question_analysis(question)
+        result = generate_sql_from_question(question)
+        print(f"\n📝 RESULT:")
+        print(result)
+        print(f"\n{'='*70}")
