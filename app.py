@@ -66,6 +66,52 @@ def clean_session_data():
     if 'table_html' in session and len(session.get('table_html', '')) > 5000:
         session['table_html'] = session['table_html'][:5000] + "... [truncated]"
 
+
+def get_session_size():
+    """Calculate current session size in bytes"""
+    try:
+        import pickle
+        return len(pickle.dumps(dict(session)))
+    except:
+        return 0
+
+def clean_session_data():
+    """Aggressively clean session to prevent overflow"""
+    # Remove ALL large data items
+    large_keys = ['table_html', 'chart_base64', 'rewritten_message', 'oauth_state']
+    for key in large_keys:
+        session.pop(key, None)
+    
+    # Keep only essential data
+    essential_keys = ['credentials', 'query']
+    current_session = dict(session)
+    session.clear()
+    
+    # Restore only essential data
+    for key in essential_keys:
+        if key in current_session:
+            session[key] = current_session[key]
+    
+    print(f"Session cleaned. New size: {get_session_size()} bytes")
+
+
+@app.route("/session_info")
+def session_info():
+    """Debug route to check session size"""
+    size = get_session_size()
+    keys = list(session.keys())
+    
+    info = {
+        'size_bytes': size,
+        'size_kb': round(size / 1024, 2),
+        'keys': keys,
+        'status': 'OK' if size < 3000 else 'WARNING' if size < 4000 else 'CRITICAL'
+    }
+    
+    return jsonify(info)
+
+
+
 def rewrite_message(user_input):
     try:
         response = client.chat.completions.create(
@@ -87,39 +133,53 @@ def index():
     query = None
     chart_data_uri = None
     
-    # Check if user is authenticated
     is_authenticated = 'credentials' in session
 
     if request.method == "POST":
         question = request.form.get("question")
         if not question:
-            return render_template("index.html", result="Please enter a question", query=query, chart_path=chart_data_uri, is_authenticated=is_authenticated)
+            return render_template("index.html", result="Please enter a question", 
+                                 query=query, chart_path=chart_data_uri, 
+                                 is_authenticated=is_authenticated)
         
         try:
-            # Clean previous session data first
+            # CRITICAL: Clean session BEFORE adding new data
             clean_session_data()
             
+            # Generate query and results
             query = generate_sql_from_question(question)
-            session['query'] = query
-
             df = pd.read_sql(query, engine)
             result = df.to_html(classes="table table-bordered", index=False)
-            chart_data_uri = generate_chart_base64(query, engine)
             
-            # Store only essential data and limit table size
+            # Generate chart fresh (don't store in session!)
+            try:
+                chart_data_uri = generate_chart_base64(query, engine)
+                print("✅ Chart generated successfully")
+            except Exception as e:
+                print(f"❌ Chart generation failed: {str(e)}")
+                chart_data_uri = None
+            
+            # Store ONLY the query (minimal data)
             session['query'] = query
-            session['chart_base64'] = chart_data_uri
+            session['has_chart'] = chart_data_uri is not None
             
-            # Limit table HTML size to prevent session overflow
-            if len(result) > 8000:  # Limit table size
-                # Truncate table if too large
-                session['table_html'] = result[:8000] + "... [Table truncated for email compatibility]"
-            else:
-                session['table_html'] = result
+            # Monitor session size
+            session_size = get_session_size()
+            print(f"Session size after query: {session_size} bytes")
+            
+            if session_size > 3000:
+                print("⚠️ WARNING: Session size is getting large!")
+                clean_session_data()
+                session['query'] = query
+                session['has_chart'] = chart_data_uri is not None
+            
         except Exception as e:
             result = f"<p style='color:red;'>Error: {str(e)}</p>"
 
-    return render_template("index.html", result=result, query=query, chart_path=chart_data_uri, is_authenticated=is_authenticated)
+    return render_template("index.html", result=result, query=query, 
+                         chart_path=chart_data_uri, is_authenticated=is_authenticated)
+
+
 
 def send_email(subject, body, to_email, chart_image_bytes=None, table_html=None):
     if 'credentials' not in session:
@@ -163,7 +223,7 @@ def send_email(subject, body, to_email, chart_image_bytes=None, table_html=None)
     except Exception as e:
         raise Exception(f"Failed to send email: {str(e)}")
 
-# Enhanced compose_email route
+# Fix 1: Make sure chart is actually attached
 @app.route("/compose_email", methods=["GET", "POST"])
 def compose_email():
     if 'credentials' not in session:
@@ -173,33 +233,51 @@ def compose_email():
         to_email = request.form.get('to_email')
         subject = request.form.get('subject')
         body = request.form.get('body')
+        include_chart = request.form.get('include_chart') == 'on'
         
         if not all([to_email, subject, body]):
             return render_template("compose_email.html", error="Please fill in all required fields")
         
-        # For now, let's just send a simple email with the message
-        # The data attachment issue can be addressed separately
         try:
+            query = session.get('query', '')
+            
+            # Build email content
+            email_content_parts = [body.replace('\n', '<br>')]
+            
+            # Add query info if available
+            if query:
+                email_content_parts.append(f"""
+                <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-left: 4px solid #007bff; border-radius: 5px;">
+                    <h6 style="color: #007bff; margin: 0 0 10px 0;">📊 Analysis Query:</h6>
+                    <code style="font-size: 0.9em; color: #333;">{query}</code>
+                </div>
+                """)
+            
+            # Create HTML email
             simple_html = f'''<!DOCTYPE html>
             <html>
             <head>
                 <meta charset="UTF-8">
                 <style>
-                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }}
                     .content {{ padding: 20px; }}
+                    .signature {{ margin-top: 30px; padding-top: 20px; border-top: 2px solid #f0f0f0; color: #666; }}
+                    code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }}
                 </style>
             </head>
             <body>
                 <div class="content">
-                    {body.replace(chr(10), '<br>')}
+                    {''.join(email_content_parts)}
                     
-                    
-                
+                    <div class="signature">
+                        <p><strong>Best regards,</strong><br>
+                        Data Analytics Team</p>
+                    </div>
                 </div>
             </body>
             </html>'''
             
-            # Create and send email
+            # Create email message
             creds = Credentials(
                 token=session['credentials']['token'],
                 refresh_token=session['credentials']['refresh_token'],
@@ -214,31 +292,76 @@ def compose_email():
             msg['to'] = to_email
             msg['subject'] = subject
             msg.attach(MIMEText(simple_html, "html"))
+            
+            chart_attached = False
+            
+            # IMPORTANT: Generate and attach chart if requested
+            # CRITICAL FIX: Generate chart fresh, don't use session
+            if include_chart and query:
+                try:
+                    print(f"🔄 Generating fresh chart for query: {query}")
+                    chart_base64 = generate_chart_base64(query, engine)
+                    
+                    if chart_base64:
+                        print("✅ Chart generated, attaching to email...")
+                        
+                        # Handle data URL format
+                        if chart_base64.startswith('data:image'):
+                            chart_bytes = base64.b64decode(chart_base64.split(",")[1])
+                        else:
+                            chart_bytes = base64.b64decode(chart_base64)
+                        
+                        chart_attachment = MIMEImage(chart_bytes)
+                        chart_attachment.add_header('Content-Disposition', 'attachment', 
+                                                filename='analysis_chart.png')
+                        msg.attach(chart_attachment)
+                        chart_attached = True
+                        print("📎 Chart successfully attached!")
+                    else:
+                        print("❌ No chart data generated")
+                        
+                except Exception as e:
+                    print(f"❌ Error generating/attaching chart: {str(e)}")
 
+            # Send email
             raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
             message_body = {"raw": raw_message}
             
             result = service.users().messages().send(userId="me", body=message_body).execute()
-            return f"✅ Email sent successfully! Message ID: {result['id']}"
+            
+            success_parts = [f"✅ Email sent successfully! Message ID: {result['id']}"]
+            if chart_attached:
+                success_parts.append("📊 Chart attached")
+            elif include_chart:
+                success_parts.append("⚠️ Chart was requested but could not be generated")
+                
+            return "<br>".join(success_parts)
             
         except Exception as e:
             return f"Error sending email: {str(e)}"
 
     # Handle GET request
-    #analysis_summary = session.get('analysis_summary', '')
-    analysis_summary = "Email ready to send" 
-    chart_available = session.get('chart_base64') is not None
-    original_question = session.get('original_question', 'N/A')
+    query = session.get('query', '')
+    has_chart = session.get('has_chart', False)
     
-    default_message = "Please find the analysis results below."
-    if original_question != 'N/A':
-        default_message = f"Please find the data analysis results for: {original_question}"
+    has_analysis_data = bool(query)
+    
+    if has_analysis_data:
+        default_message = "Please find the data analysis results attached."
+        analysis_summary = "Chart available for attachment" if has_chart else "Query ready"
+    else:
+        default_message = "Please run a data analysis query first."
+        analysis_summary = None
     
     return render_template("compose_email.html", 
                          rewritten_message=default_message,
-                         analysis_summary="Ready to send",
-                         chart_available=chart_available,
-                         original_question=original_question)
+                         analysis_summary=analysis_summary,
+                         chart_available=has_chart,
+                         table_available=False,
+                         has_analysis_data=has_analysis_data,
+                         query=query)
+
+
 
 # Add a simple test route for the rewriter
 @app.route("/test_rewrite")
