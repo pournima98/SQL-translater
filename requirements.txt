@@ -14,3 +14,11 @@ jinja2
 google-auth 
 google-auth-oauthlib 
 google-api-python-client
+numpy>=1.26
+langchain-openai>=0.1.17
+oauthlib>=3.2.2
+requests>=2.32.3
+spacy
+sentence-transformers
+cryptography
+pytest-flask
