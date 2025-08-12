@@ -2,6 +2,9 @@
 
 
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
@@ -11,7 +14,6 @@ import pandas as pd
 from utils.charts import generate_chart_base64
 from langchain_agent import generate_sql_from_question
 from flask import Flask, request, render_template, session, redirect, url_for, flash
-from dotenv import load_dotenv
 from openai import OpenAI
 import openai
 from google_auth_oauthlib.flow import Flow
@@ -22,11 +24,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 import base64
 from flask import jsonify
-import json
 
-
-
-load_dotenv()  # loads variables from .env into environment
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY")
