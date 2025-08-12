@@ -1,8 +1,12 @@
 from sqlalchemy import create_engine
 import pandas as pd
+from dotenv import load_dotenv
+import os
 
+db_url = os.getenv("DB_URL")
+engine = create_engine(db_url)
 # Connect to MySQL
-engine = create_engine("mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+#engine = create_engine("mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
 
 # Load churn-relevant joined data
 query = """
