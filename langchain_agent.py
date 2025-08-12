@@ -51,7 +51,10 @@ class DatabaseSchemaAnalyzer:
     """Handles database schema analysis and caching"""
     
     def __init__(self, db_url: str = None):
-        self.db_url = db_url or os.getenv("DB_URL", "mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+        #self.db_url = db_url or os.getenv("DB_URL", "mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+        self.db_url = db_url or os.getenv("DB_URL")
+        if not self.db_url:
+            raise ValueError("DB_URL environment variable is required")
         self.engine = None
         self.schema_data = {}
         self.sample_data = {}
@@ -694,9 +697,16 @@ Generate a clean, executable MySQL query (no markdown formatting):
             return f"❌ **SQL Validation Error**: {str(e)}"
 
 # Convenience functions
+# def get_database_engine():
+#     """Get database engine - matches your app.py configuration"""
+#     db_url = os.getenv("DB_URL", "mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+#     return create_engine(db_url)
+
 def get_database_engine():
-    """Get database engine - matches your app.py configuration"""
-    db_url = os.getenv("DB_URL", "mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
+    """Get database engine - uses environment variable only"""
+    db_url = os.getenv("DB_URL")
+    if not db_url:
+        raise ValueError("DB_URL environment variable is required")
     return create_engine(db_url)
 
 def generate_sql_from_question(question: str) -> str:
