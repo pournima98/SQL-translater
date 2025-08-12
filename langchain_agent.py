@@ -2,6 +2,8 @@
 
 import os
 from dotenv import load_dotenv
+
+from core.mysql_engine import get_db_connection
 load_dotenv()
 
 from langchain_openai import ChatOpenAI
@@ -65,7 +67,8 @@ class DatabaseSchemaAnalyzer:
     def get_engine(self):
         """Get or create database engine"""
         if not self.engine:
-            self.engine = create_engine(self.db_url)
+            self.engine = get_db_connection()
+
         return self.engine
     
     def analyze_schema(self, force_refresh: bool = False) -> Dict[str, Any]:

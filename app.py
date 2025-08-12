@@ -4,6 +4,8 @@
 import os
 from dotenv import load_dotenv
 
+from core.mysql_engine import get_db_connection
+
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
@@ -38,7 +40,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 #engine = create_engine("mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
 
 db_url = os.getenv("DB_URL")
-engine = create_engine(db_url)
+engine = get_db_connection()
 
 # Google OAuth configuration
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")

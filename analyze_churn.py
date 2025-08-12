@@ -3,20 +3,22 @@ import pandas as pd
 from dotenv import load_dotenv
 import os
 
+from core.mysql_engine import get_db_connection
+
 db_url = os.getenv("DB_URL")
-engine = create_engine(db_url)
+engine = get_db_connection()
 # Connect to MySQL
 #engine = create_engine("mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
 
 # Load churn-relevant joined data
 query = """
 SELECT c.customer_id,
-       s.end_date,
-       s.is_active,
-       COALESCE(AVG(u.logins), 0) AS avg_logins,
-       COALESCE(AVG(u.sessions), 0) AS avg_sessions,
-       COALESCE(COUNT(DISTINCT t.ticket_id), 0) AS support_tickets,
-       COALESCE(AVG(p.amount), 0) AS avg_payment
+    s.end_date,
+    s.is_active,
+    COALESCE(AVG(u.logins), 0) AS avg_logins,
+    COALESCE(AVG(u.sessions), 0) AS avg_sessions,
+    COALESCE(COUNT(DISTINCT t.ticket_id), 0) AS support_tickets,
+    COALESCE(AVG(p.amount), 0) AS avg_payment
 FROM customers c
 JOIN subscriptions s ON c.customer_id = s.customer_id
 LEFT JOIN usages u ON u.customer_id = c.customer_id

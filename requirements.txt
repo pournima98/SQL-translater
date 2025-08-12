@@ -22,3 +22,4 @@ spacy
 sentence-transformers
 cryptography
 pytest-flask
+cloud-sql-python-connector[pymysql]

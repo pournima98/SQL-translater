@@ -3,10 +3,11 @@ import pandas as pd
 from faker import Faker
 import random
 
+from core.mysql_engine import get_db_connection
+
 # Connect to MySQL
 # engine = create_engine('mysql+pymysql://root:Hemant@123@localhost/churn_analysis')
-engine = create_engine("mysql+pymysql://root:Hemant%40123@localhost:3306/churn_analysis")
-
+engine = get_db_connection()
 
 fake = Faker()
 
