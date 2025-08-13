@@ -1,5 +1,6 @@
 #########
 
+#####3
 
 import os
 from dotenv import load_dotenv
@@ -9,6 +10,9 @@ from core.mysql_engine import get_db_connection
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+
+
+
 
 #########
 from sqlalchemy import create_engine
@@ -27,7 +31,9 @@ from email.mime.image import MIMEImage
 import base64
 from flask import jsonify
 
-
+# Add this to your app.py temporarily for debugging
+print("GCP_CLOUD_SQL_CONNECTION_NAME:", os.getenv('GCP_CLOUD_SQL_CONNECTION_NAME'))
+print("GOOGLE_APPLICATION_CREDENTIALS:", os.getenv('GOOGLE_APPLICATION_CREDENTIALS'))
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY")
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -225,140 +231,6 @@ def send_email(subject, body, to_email, chart_image_bytes=None, table_html=None)
         raise Exception(f"Failed to send email: {str(e)}")
 
 # Fix 1: Make sure chart is actually attached
-@app.route("/compose_email", methods=["GET", "POST"])
-def compose_email():
-    if 'credentials' not in session:
-        return redirect(url_for('authorize'))
-
-    if request.method == "POST":
-        to_email = request.form.get('to_email')
-        subject = request.form.get('subject')
-        body = request.form.get('body')
-        include_chart = request.form.get('include_chart') == 'on'
-        
-        if not all([to_email, subject, body]):
-            return render_template("compose_email.html", error="Please fill in all required fields")
-        
-        try:
-            query = session.get('query', '')
-            
-            # Build email content
-            email_content_parts = [body.replace('\n', '<br>')]
-            
-            # Add query info if available
-            # if query:
-            #     email_content_parts.append(f"""
-            #     <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-left: 4px solid #007bff; border-radius: 5px;">
-            #         <h6 style="color: #007bff; margin: 0 0 10px 0;">📊 Analysis Query:</h6>
-            #         <code style="font-size: 0.9em; color: #333;">{query}</code>
-            #     </div>
-            #     """)
-            
-            # Create HTML email
-            simple_html = f'''<!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }}
-                    .content {{ padding: 20px; }}
-                    .signature {{ margin-top: 30px; padding-top: 20px; border-top: 2px solid #f0f0f0; color: #666; }}
-                    code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }}
-                </style>
-            </head>
-            <body>
-                <div class="content">
-                    {''.join(email_content_parts)}
-                    
-
-                </div>
-            </body>
-            </html>'''
-            
-            # Create email message
-            creds = Credentials(
-                token=session['credentials']['token'],
-                refresh_token=session['credentials']['refresh_token'],
-                token_uri=session['credentials']['token_uri'],
-                client_id=session['credentials']['client_id'],
-                client_secret=session['credentials']['client_secret'],
-                scopes=session['credentials']['scopes']
-            )
-
-            service = build("gmail", "v1", credentials=creds)
-            msg = MIMEMultipart()
-            msg['to'] = to_email
-            msg['subject'] = subject
-            msg.attach(MIMEText(simple_html, "html"))
-            
-            chart_attached = False
-            
-            # IMPORTANT: Generate and attach chart if requested
-            # CRITICAL FIX: Generate chart fresh, don't use session
-            if include_chart and query:
-                try:
-                    print(f"🔄 Generating fresh chart for query: {query}")
-                    chart_base64 = generate_chart_base64(query, engine)
-                    
-                    if chart_base64:
-                        print("✅ Chart generated, attaching to email...")
-                        
-                        # Handle data URL format
-                        if chart_base64.startswith('data:image'):
-                            chart_bytes = base64.b64decode(chart_base64.split(",")[1])
-                        else:
-                            chart_bytes = base64.b64decode(chart_base64)
-                        
-                        chart_attachment = MIMEImage(chart_bytes)
-                        chart_attachment.add_header('Content-Disposition', 'attachment', 
-                                                filename='analysis_chart.png')
-                        msg.attach(chart_attachment)
-                        chart_attached = True
-                        print("📎 Chart successfully attached!")
-                    else:
-                        print("❌ No chart data generated")
-                        
-                except Exception as e:
-                    print(f"❌ Error generating/attaching chart: {str(e)}")
-
-            # Send email
-            raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-            message_body = {"raw": raw_message}
-            
-            result = service.users().messages().send(userId="me", body=message_body).execute()
-            
-            success_parts = [f"✅ Email sent successfully! Message ID: {result['id']}"]
-            if chart_attached:
-                success_parts.append("📊 Chart attached")
-            elif include_chart:
-                success_parts.append("⚠️ Chart was requested but could not be generated")
-                
-            return "<br>".join(success_parts)
-            
-        except Exception as e:
-            return f"Error sending email: {str(e)}"
-
-    # Handle GET request
-    query = session.get('query', '')
-    has_chart = session.get('has_chart', False)
-    
-    has_analysis_data = bool(query)
-    
-    if has_analysis_data:
-        default_message = "Please find the data analysis results attached."
-        analysis_summary = "Chart available for attachment" if has_chart else "Query ready"
-    else:
-        default_message = "Please run a data analysis query first."
-        analysis_summary = None
-    
-    return render_template("compose_email.html", 
-                         rewritten_message=default_message,
-                         analysis_summary=analysis_summary,
-                         chart_available=has_chart,
-                         table_available=False,
-                         has_analysis_data=has_analysis_data,
-                         query=query)
-
 
 
 # Add a simple test route for the rewriter
@@ -463,40 +335,6 @@ def logout():
     session.clear()
     return redirect(url_for('index'))
 
-@app.route('/confirm_and_send_email', methods=['GET', 'POST'])
-def confirm_and_send_email():
-    if 'credentials' not in session:
-        return redirect(url_for('authorize'))
-        
-    if request.method == 'GET':
-        rewritten_message = session.get('rewritten_message', '')
-        return render_template("confirm_email.html", message=rewritten_message)
-
-    to = request.form.get('to')
-    subject = request.form.get('subject')
-    message = request.form.get('message')
-    
-    if not all([to, subject, message]):
-        return render_template("confirm_email.html", error="Please fill in all required fields")
-    
-    try:
-        chart_base64 = session.get('chart_base64')
-        table_html = session.get('table_html')
-        
-        chart_bytes = None
-        if chart_base64:
-            try:
-                if ',' in chart_base64:
-                    chart_bytes = base64.b64decode(chart_base64.split(",")[1])
-                else:
-                    chart_bytes = base64.b64decode(chart_base64)
-            except Exception as e:
-                print(f"Error processing chart: {str(e)}")
-        
-        result = send_email(subject, message, to, chart_bytes, table_html)
-        return f"✅ Email sent to {to} — ID: {result['id']}"
-    except Exception as e:
-        return f"Error sending email: {str(e)}"
 
 # Add a simple route to check auth status
 @app.route("/auth_status")
@@ -624,6 +462,176 @@ def rewrite_message_api():
             'success': False,
             'error': str(e)
         })    
+    
+
+# Replace your existing /compose_email route with this updated version
+
+@app.route("/compose_email", methods=["GET", "POST"])
+def compose_email():
+    if 'credentials' not in session:
+        return redirect(url_for('authorize'))
+
+    if request.method == "POST":
+        to_email = request.form.get('to_email')
+        subject = request.form.get('subject')
+        body = request.form.get('body')
+        include_chart = request.form.get('include_chart') == 'on'
+        
+        if not all([to_email, subject, body]):
+            return render_template("compose_email.html", error="Please fill in all required fields")
+        
+        try:
+            query = session.get('query', '')
+            
+            # Build email content
+            email_content_parts = [body.replace('\n', '<br>')]
+            
+            # Create HTML email
+            simple_html = f'''<!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }}
+                    .content {{ padding: 20px; }}
+                    .signature {{ margin-top: 30px; padding-top: 20px; border-top: 2px solid #f0f0f0; color: #666; }}
+                    code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }}
+                </style>
+            </head>
+            <body>
+                <div class="content">
+                    {''.join(email_content_parts)}
+                </div>
+            </body>
+            </html>'''
+            
+            # Create email message
+            creds = Credentials(
+                token=session['credentials']['token'],
+                refresh_token=session['credentials']['refresh_token'],
+                token_uri=session['credentials']['token_uri'],
+                client_id=session['credentials']['client_id'],
+                client_secret=session['credentials']['client_secret'],
+                scopes=session['credentials']['scopes']
+            )
+
+            service = build("gmail", "v1", credentials=creds)
+            msg = MIMEMultipart()
+            msg['to'] = to_email
+            msg['subject'] = subject
+            msg.attach(MIMEText(simple_html, "html"))
+            
+            chart_attached = False
+            
+            # Generate and attach chart if requested
+            if include_chart and query:
+                try:
+                    print(f"🔄 Generating fresh chart for query: {query}")
+                    chart_base64 = generate_chart_base64(query, engine)
+                    
+                    if chart_base64:
+                        print("✅ Chart generated, attaching to email...")
+                        
+                        # Handle data URL format
+                        if chart_base64.startswith('data:image'):
+                            chart_bytes = base64.b64decode(chart_base64.split(",")[1])
+                        else:
+                            chart_bytes = base64.b64decode(chart_base64)
+                        
+                        chart_attachment = MIMEImage(chart_bytes)
+                        chart_attachment.add_header('Content-Disposition', 'attachment', 
+                                                filename='analysis_chart.png')
+                        msg.attach(chart_attachment)
+                        chart_attached = True
+                        print("📎 Chart successfully attached!")
+                    else:
+                        print("❌ No chart data generated")
+                        
+                except Exception as e:
+                    print(f"❌ Error generating/attaching chart: {str(e)}")
+
+            # Send email
+            raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+            message_body = {"raw": raw_message}
+            
+            result = service.users().messages().send(userId="me", body=message_body).execute()
+            
+            # Instead of returning success message, use flash and redirect
+            success_message = f"✅ Email sent successfully to {to_email}!"
+            if chart_attached:
+                success_message += " 📊 Chart was attached."
+            elif include_chart:
+                success_message += " ⚠️ Chart was requested but could not be generated."
+                
+            flash(success_message, 'success')
+            return redirect(url_for('index'))
+            
+        except Exception as e:
+            flash(f"❌ Error sending email: {str(e)}", 'error')
+            return render_template("compose_email.html", error=f"Error sending email: {str(e)}")
+
+    # Handle GET request (existing code remains the same)
+    query = session.get('query', '')
+    has_chart = session.get('has_chart', False)
+    
+    has_analysis_data = bool(query)
+    
+    if has_analysis_data:
+        default_message = "Please find the data analysis results attached."
+        analysis_summary = "Chart available for attachment" if has_chart else "Query ready"
+    else:
+        default_message = "Please run a data analysis query first."
+        analysis_summary = None
+    
+    return render_template("compose_email.html", 
+                         rewritten_message=default_message,
+                         analysis_summary=analysis_summary,
+                         chart_available=has_chart,
+                         table_available=False,
+                         has_analysis_data=has_analysis_data,
+                         query=query)
+
+
+# Also update the confirm_and_send_email route
+@app.route('/confirm_and_send_email', methods=['GET', 'POST'])
+def confirm_and_send_email():
+    if 'credentials' not in session:
+        return redirect(url_for('authorize'))
+        
+    if request.method == 'GET':
+        rewritten_message = session.get('rewritten_message', '')
+        return render_template("confirm_email.html", message=rewritten_message)
+
+    to = request.form.get('to')
+    subject = request.form.get('subject')
+    message = request.form.get('message')
+    
+    if not all([to, subject, message]):
+        return render_template("confirm_email.html", error="Please fill in all required fields")
+    
+    try:
+        chart_base64 = session.get('chart_base64')
+        table_html = session.get('table_html')
+        
+        chart_bytes = None
+        if chart_base64:
+            try:
+                if ',' in chart_base64:
+                    chart_bytes = base64.b64decode(chart_base64.split(",")[1])
+                else:
+                    chart_bytes = base64.b64decode(chart_base64)
+            except Exception as e:
+                print(f"Error processing chart: {str(e)}")
+        
+        result = send_email(subject, message, to, chart_bytes, table_html)
+        
+        # Use flash message and redirect instead of returning success text
+        flash(f"✅ Email sent successfully to {to}! Message ID: {result['id']}", 'success')
+        return redirect(url_for('index'))
+        
+    except Exception as e:
+        flash(f"❌ Error sending email: {str(e)}", 'error')
+        return render_template("confirm_email.html", error=f"Error sending email: {str(e)}")    
 
 if __name__ == "__main__":
     app.run(debug=True, host="127.0.0.1", port=5000)

@@ -1,7 +1,4 @@
-###
-
-
-# utils/charts.py - FIXED VERSION
+# utils/charts.py - FIXED VERSION with corrected column selection
 import io
 import base64
 import matplotlib.pyplot as plt
@@ -40,7 +37,9 @@ class EnhancedChartGenerator:
                 r'limit\s+\d+',
                 r'order\s+by.*desc.*limit',
                 r'max\s*\(',
-                r'greatest\s*\('
+                r'greatest\s*\(',
+                r'sum\s*\(',  # Often indicates ranking by totals
+                r'total_'     # Common pattern for ranking queries
             ],
             'comparison': [
                 r'group\s+by\s+(?!.*date)(?!.*year)(?!.*month)',
@@ -58,14 +57,14 @@ class EnhancedChartGenerator:
             ]
         }
         
-        # Column type inference patterns
+        # Column type inference patterns - IMPROVED
         self.column_patterns = {
             'date': [r'date', r'time', r'year', r'month', r'created', r'updated'],
-            'money': [r'amount', r'revenue', r'sales', r'price', r'cost', r'payment'],
-            'count': [r'count', r'total', r'sum', r'number', r'quantity'],
+            'money': [r'amount', r'revenue', r'sales', r'price', r'cost', r'payment', r'total_sales', r'total_amount'],
+            'count': [r'count', r'total_count', r'number', r'quantity', r'^total$'],
             'name': [r'name', r'title', r'label', r'description'],
             'category': [r'region', r'type', r'category', r'status', r'plan', r'group'],
-            'id': [r'_id$', r'^id', r'key$', r'code$']
+            'id': [r'_id$', r'^id', r'key$', r'code$', r'customer_id$', r'payment_id$']
         }
     
     def analyze_sql_query(self, sql_query):
@@ -95,9 +94,9 @@ class EnhancedChartGenerator:
                 intent['is_ranking'] = True
                 if 'limit' in sql_lower:
                     intent['has_limit'] = True
-                    # If it's not time series but has ranking, make it comparison
-                    if not intent['is_time_series']:
-                        intent['type'] = 'ranking'
+                # If it's not time series but has ranking, make it comparison
+                if not intent['is_time_series']:
+                    intent['type'] = 'ranking'
                 break
         
         # Check for aggregation
@@ -115,10 +114,10 @@ class EnhancedChartGenerator:
         return intent
     
     def classify_column_type(self, column_name, data_series):
-        """Classify column type based on name and data"""
+        """Classify column type based on name and data - IMPROVED"""
         col_lower = column_name.lower()
         
-        # Check patterns
+        # Check patterns first
         for col_type, patterns in self.column_patterns.items():
             if any(re.search(pattern, col_lower) for pattern in patterns):
                 return col_type
@@ -126,8 +125,14 @@ class EnhancedChartGenerator:
         # Check data characteristics
         if pd.api.types.is_numeric_dtype(data_series):
             unique_ratio = data_series.nunique() / len(data_series)
-            if unique_ratio > 0.95:  # Mostly unique values
+            
+            # Check if it's likely an ID (high uniqueness)
+            if unique_ratio > 0.95:
                 return 'id'
+            # Check if it contains typical money values
+            elif any(keyword in col_lower for keyword in ['sales', 'amount', 'revenue', 'payment', 'total']):
+                return 'money'
+            # Check if it's count-like (integers >= 0)
             elif data_series.dtype in ['int64', 'int32'] and data_series.min() >= 0:
                 return 'count'
             else:
@@ -163,7 +168,7 @@ class EnhancedChartGenerator:
                 except:
                     pass
         
-        # FIXED: Handle numeric columns that should be integers
+        # Handle numeric columns that should be integers
         for col in df.columns:
             if pd.api.types.is_numeric_dtype(df[col]):
                 try:
@@ -187,69 +192,93 @@ class EnhancedChartGenerator:
             if date_cols:
                 df = df.sort_values(date_cols[0])
         elif intent['is_ranking']:
-            # Sort by numeric columns descending
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            # Sort by numeric columns descending (but not ID columns)
+            numeric_cols = [col for col in df.select_dtypes(include=[np.number]).columns 
+                          if self.classify_column_type(col, df[col]) != 'id']
             if len(numeric_cols) > 0:
                 df = df.sort_values(numeric_cols[0], ascending=False)
         
         return df
     
     def smart_column_selection(self, df, sql_intent):
-        """Intelligently select X and Y columns based on data and query intent"""
+        """FIXED: Intelligently select X and Y columns based on data and query intent"""
         
         if len(df.columns) < 2:
             raise ValueError("Need at least 2 columns for visualization")
         
         columns_info = {}
         for col in df.columns:
+            col_type = self.classify_column_type(col, df[col])
             columns_info[col] = {
-                'type': self.classify_column_type(col, df[col]),
+                'type': col_type,
                 'is_numeric': pd.api.types.is_numeric_dtype(df[col]),
                 'cardinality': df[col].nunique(),
                 'has_nulls': df[col].isna().sum() > 0
             }
+        
+        print(f"DEBUG - Column types: {[(col, info['type']) for col, info in columns_info.items()]}")
         
         # Smart selection based on query intent
         x_col, y_col = None, None
         
         if sql_intent['is_time_series']:
             # X should be time, Y should be measure
-            time_cols = [col for col, info in columns_info.items() if info['type'] in ['date'] or 'year' in col.lower() or 'month' in col.lower()]
-            measure_cols = [col for col, info in columns_info.items() if info['is_numeric'] and info['type'] in ['count', 'money', 'measure']]
+            time_cols = [col for col, info in columns_info.items() 
+                        if info['type'] in ['date'] or 'year' in col.lower() or 'month' in col.lower()]
+            measure_cols = [col for col, info in columns_info.items() 
+                          if info['is_numeric'] and info['type'] in ['count', 'money', 'measure']]
             
             if time_cols:
                 x_col = time_cols[0]
             if measure_cols:
                 y_col = measure_cols[0]
         
-        elif sql_intent['is_ranking']:
-            # X should be categorical/name, Y should be measure (what we're ranking by)
-            cat_cols = [col for col, info in columns_info.items() if info['type'] in ['category', 'name'] and info['cardinality'] <= 50]
-            measure_cols = [col for col, info in columns_info.items() if info['is_numeric']]
+        elif sql_intent['is_ranking'] or sql_intent['is_aggregation']:
+            # X should be categorical/name, Y should be the measure we're ranking by
+            # FIXED: Prioritize non-ID columns for categorical axis
+            cat_cols = [col for col, info in columns_info.items() 
+                       if info['type'] in ['category', 'name'] and info['cardinality'] <= 50]
+            # FIXED: Prioritize money/measure columns over IDs for Y-axis
+            measure_cols = [col for col, info in columns_info.items() 
+                          if info['is_numeric'] and info['type'] in ['money', 'count', 'measure']]
             
-            if cat_cols:
+            if cat_cols and measure_cols:
                 x_col = cat_cols[0]
-            if measure_cols:
                 y_col = measure_cols[0]
         
         else:
-            # Default: categorical for X, numeric for Y
-            cat_cols = [col for col, info in columns_info.items() if not info['is_numeric'] or info['type'] == 'category']
-            num_cols = [col for col, info in columns_info.items() if info['is_numeric'] and info['type'] != 'id']
+            # Default: categorical for X, numeric for Y (but avoid IDs)
+            cat_cols = [col for col, info in columns_info.items() 
+                       if not info['is_numeric'] or info['type'] == 'category']
+            num_cols = [col for col, info in columns_info.items() 
+                       if info['is_numeric'] and info['type'] != 'id']
             
             if cat_cols and num_cols:
                 x_col = cat_cols[0]
                 y_col = num_cols[0]
         
-        # Fallback: just pick first two columns
+        # Fallback: pick smartly from available columns, avoiding IDs when possible
         if not x_col or not y_col:
             cols = list(df.columns)
-            x_col = cols[0] if not x_col else x_col
-            y_col = cols[1] if not y_col else y_col
             
-            # Make sure they're different
-            if x_col == y_col and len(cols) > 1:
-                y_col = cols[1] if x_col == cols[0] else cols[0]
+            # For X-axis, prefer non-numeric or categorical
+            if not x_col:
+                non_numeric_cols = [col for col in cols if not pd.api.types.is_numeric_dtype(df[col])]
+                x_col = non_numeric_cols[0] if non_numeric_cols else cols[0]
+            
+            # For Y-axis, prefer numeric non-ID columns
+            if not y_col:
+                numeric_non_id_cols = [col for col in cols 
+                                     if pd.api.types.is_numeric_dtype(df[col]) 
+                                     and self.classify_column_type(col, df[col]) != 'id'
+                                     and col != x_col]
+                if numeric_non_id_cols:
+                    y_col = numeric_non_id_cols[0]
+                else:
+                    # Last resort: pick any column that's not x_col
+                    y_col = [col for col in cols if col != x_col][0]
+        
+        print(f"DEBUG - Selected: X={x_col} (type: {columns_info[x_col]['type']}), Y={y_col} (type: {columns_info[y_col]['type']})")
         
         return x_col, y_col
     
@@ -271,6 +300,12 @@ class EnhancedChartGenerator:
         if sql_intent['is_time_series'] or x_info['type'] == 'date':
             return 'line'
         
+        # SPECIFIC: Regional data = pie chart
+        if (not x_info['is_numeric'] and y_info['is_numeric'] and 
+            any(keyword in x_col.lower() for keyword in ['region', 'area', 'location']) and
+            x_info['cardinality'] <= 8):  # Reasonable limit for regions
+            return 'pie'
+        
         # Ranking with limit = bar chart
         if sql_intent['is_ranking'] or sql_intent['has_limit']:
             return 'bar'
@@ -281,9 +316,9 @@ class EnhancedChartGenerator:
             if x_info['cardinality'] > 10 and y_info['cardinality'] > 10:
                 return 'scatter'
         
-        # Categorical vs numeric = bar
+        # Categorical vs numeric = bar or pie
         if not x_info['is_numeric'] and y_info['is_numeric']:
-            # Pie chart only for very small datasets
+            # Pie chart only for very small datasets (original logic)
             if len(df) <= 5 and x_info['cardinality'] <= 5:
                 return 'pie'
             else:
@@ -323,7 +358,9 @@ class EnhancedChartGenerator:
             'Count(': 'Count of ',
             'Avg(': 'Average ',
             'Max(': 'Maximum ',
-            'Min(': 'Minimum '
+            'Min(': 'Minimum ',
+            'Total Sales': 'Total Sales',
+            'Customer Id': 'Customer ID'
         }
         
         for old, new in replacements.items():
@@ -494,70 +531,3 @@ def generate_chart_base64(query, engine):
         import traceback
         traceback.print_exc()
         return None
-
-
-# Helper functions for debugging
-def analyze_dataframe(df):
-    """Debug helper to analyze dataframe structure"""
-    print("\n📋 DATAFRAME ANALYSIS:")
-    print("="*50)
-    print(f"Shape: {df.shape}")
-    print(f"Columns: {list(df.columns)}")
-    print("\nColumn Details:")
-    for col in df.columns:
-        print(f"  {col}:")
-        print(f"    Type: {df[col].dtype}")
-        print(f"    Unique values: {df[col].nunique()}")
-        print(f"    Sample: {df[col].head(3).tolist()}")
-    print(f"\nSample Data:\n{df.head()}")
-
-def test_chart_generation(sql_query, engine):
-    """Test chart generation with debugging"""
-    print(f"\n🧪 TESTING CHART GENERATION")
-    print("="*50)
-    print(f"SQL: {sql_query}")
-    
-    try:
-        df = pd.read_sql(sql_query, engine)
-        analyze_dataframe(df)
-        
-        chart_gen = EnhancedChartGenerator()
-        chart_uri = chart_gen.generate_chart_from_query(df, sql_query)
-        
-        print("✅ Chart generated successfully!")
-        return chart_uri
-        
-    except Exception as e:
-        print(f"❌ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-
-# Usage for your specific questions:
-def debug_date_range_query(engine):
-    """Debug the 'years of data' question"""
-    print("\n🔍 DEBUGGING DATE RANGE QUERY")
-    
-    queries = [
-        "SELECT MIN(YEAR(signup_date)) as first_year, MAX(YEAR(signup_date)) as last_year FROM customers",
-        "SELECT YEAR(signup_date) as year, COUNT(*) as customers FROM customers GROUP BY YEAR(signup_date) ORDER BY year",
-        "SELECT MIN(signup_date) as earliest_signup, MAX(signup_date) as latest_signup FROM customers"
-    ]
-    
-    for query in queries:
-        print(f"\nTesting: {query}")
-        test_chart_generation(query, engine)
-
-def debug_customer_sales_query(engine):
-    """Debug Dennis Christian sales question"""
-    print("\n🔍 DEBUGGING CUSTOMER SALES QUERY")
-    
-    queries = [
-        "SELECT name, YEAR(signup_date) as year, COUNT(*) as interactions FROM customers WHERE name LIKE '%Dennis%' GROUP BY name, YEAR(signup_date)",
-        "SELECT c.name, YEAR(p.payment_date) as year, SUM(p.amount) as total_payments FROM customers c JOIN payments p ON c.customer_id = p.customer_id WHERE c.name LIKE '%Dennis Christian%' GROUP BY c.name, YEAR(p.payment_date) ORDER BY year"
-    ]
-    
-    for query in queries:
-        print(f"\nTesting: {query}")
-        test_chart_generation(query, engine)

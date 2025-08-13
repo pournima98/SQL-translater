@@ -182,10 +182,29 @@ class QueryFieldExtractor:
     def __init__(self):
         self.field_patterns = self._build_field_patterns()
         self.excluded_patterns = self._build_excluded_patterns()
+        self.query_type_patterns = self._build_query_type_patterns()
+    def _build_query_type_patterns(self) -> List[str]:
+        """Build patterns that indicate query types, not database fields"""
+        return [
+            r'(?:top|highest|best)\s+customer\s+(?:per|by|in)\s+region',
+            r'customer\s+with\s+(?:top|highest|most)\s+sales\s+region\s+wise',
+            r'(?:highest|top)\s+sales\s+(?:per|by)\s+region',
+            r'top\s+customer\s+per\s+region',
+            r'customer\s+distribution\s+by\s+region',
+            r'monthly\s+signup\s+trends',
+            r'payment\s+analysis\s+by\s+plan',
+            r'revenue\s+by\s+plan',
+            r'support\s+ticket\s+categories'
+        ]    
     
     def _build_field_patterns(self) -> Dict[str, str]:
         """Build comprehensive field pattern dictionary"""
         return {
+            # # ADD THESE PATTERNS at the top:
+            # r'(?:top|highest|best)\s+customer\s+(?:per|by|in)\s+region': 'top_customer_per_region',
+            # r'customer\s+with\s+(?:top|highest|most)\s+sales\s+region\s+wise': 'top_customer_per_region',
+            # r'(?:highest|top)\s+sales\s+(?:per|by)\s+region': 'top_customer_per_region',
+        
             # Personal Information
             r'(?:customer|user|client)s?\s+email': 'email',
             r'email\s+(?:address|field|column|data)': 'email',
@@ -261,6 +280,11 @@ class QueryFieldExtractor:
         """Extract requested fields with enhanced context awareness"""
         question_lower = question.lower()
         requested_fields = set()
+        # FIRST: Check if this is a query type pattern (not a field request)
+        for pattern in self.query_type_patterns:
+            if re.search(pattern, question_lower):
+                print(f"🎯 Detected query type pattern: {pattern}")
+                return set()  # Return empty set - no specific fields requested
         
         # Check excluded patterns first
         for pattern in self.excluded_patterns:
@@ -425,7 +449,35 @@ class EnhancedSQLGenerator:
     def _build_query_templates(self) -> Dict[str, str]:
         """Build common query templates"""
         return {
-            'customer_count_by_region': """
+                'customer_count_by_region': """
+                SELECT r.region_name, COUNT(c.customer_id) as customer_count
+                FROM customers c 
+                JOIN regions r ON c.region_id = r.region_id 
+                GROUP BY r.region_name 
+                ORDER BY customer_count DESC
+            """,
+        # ADD THIS NEW TEMPLATE:
+                'top_customer_per_region': """
+                SELECT 
+                    region_name,
+                    customer_name,
+                    total_sales
+                FROM (
+                    SELECT 
+                        r.region_name,
+                        c.name as customer_name,
+                        SUM(p.amount) as total_sales,
+                        ROW_NUMBER() OVER (PARTITION BY r.region_name ORDER BY SUM(p.amount) DESC) as rank_num
+                    FROM customers c
+                    JOIN regions r ON c.region_id = r.region_id
+                    JOIN payments p ON c.customer_id = p.customer_id
+                    WHERE p.status = 'completed'
+                    GROUP BY r.region_name, c.customer_id, c.name
+                ) ranked_customers
+                WHERE rank_num = 1
+                ORDER BY total_sales DESC
+            """,
+                'customer_count_by_region': """
                 SELECT r.region_name, COUNT(c.customer_id) as customer_count
                 FROM customers c 
                 JOIN regions r ON c.region_id = r.region_id 
@@ -467,6 +519,13 @@ CRITICAL CONSTRAINTS:
 3. For geographic analysis, only region-level data is available
 4. Use MySQL syntax (LIMIT, not TOP; proper date functions)
 5. Always include proper error handling in aggregations
+
+# ADD THIS SECTION:
+SPECIAL QUERY PATTERNS:
+- For "top customer per region" or "highest sales by region": Use ROW_NUMBER() OVER (PARTITION BY r.region_name ORDER BY SUM(p.amount) DESC) and WHERE rank_num = 1
+- For "customer with top sales region wise": This means ONE customer per region with highest sales
+- Always use simple table aliases: c=customers, r=regions, p=payments
+
 
 AVAILABLE SAMPLE DATA:
 {sample_data}
@@ -532,11 +591,48 @@ Generate a clean, executable MySQL query (no markdown formatting):
         try:
             performance_stats['queries_generated'] += 1
             print(f"🔍 Generating SQL for: '{question}'")
-            
+                    # ADD THIS CHECK after loading schema:
+            question_lower = question.lower()
+                    # Check for specific patterns and return template directly
+            if any(pattern in question_lower for pattern in [
+                'top customer per region', 'customer with top sales region wise', 
+                'highest sales region wise', 'top sales by region'
+            ]):
+                template_sql = self.query_templates.get('top_customer_per_region')
+                if template_sql:
+                    print("✅ Using optimized template for top customer per region")
+                    return template_sql.strip()
             # Load schema if needed
             if not actual_schema:
                 analyzer = DatabaseSchemaAnalyzer()
                 analyzer.analyze_schema()
+            
+            question_lower = question.lower()
+            if any(pattern in question_lower for pattern in [
+            'customer with top sales region wise', 'top customer per region', 
+            'highest sales customer by region', 'best customer in each region'
+            ]):
+                return """
+SELECT 
+    region_name,
+    customer_name,
+    total_sales
+FROM (
+    SELECT 
+        r.region_name,
+        c.name as customer_name,
+        SUM(p.amount) as total_sales,
+        ROW_NUMBER() OVER (PARTITION BY r.region_name ORDER BY SUM(p.amount) DESC) as rank_num
+    FROM customers c
+    JOIN regions r ON c.region_id = r.region_id
+    JOIN payments p ON c.customer_id = p.customer_id
+    WHERE p.status = 'completed'
+    GROUP BY r.region_name, c.customer_id, c.name
+) ranked_customers
+WHERE rank_num = 1
+ORDER BY total_sales DESC
+            """.strip()
+
             
             # Extract and validate requested fields
             requested_fields = self.field_extractor.extract_fields(question)
