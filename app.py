@@ -578,7 +578,7 @@ def compose_email():
     
     if has_analysis_data:
         default_message = "Please find the data analysis results attached."
-        analysis_summary = "Chart available for attachment" if has_chart else "Query ready"
+        analysis_summary = "Your chart is ready — attach it to share instantly." if has_chart else "Query ready"
     else:
         default_message = "Please run a data analysis query first."
         analysis_summary = None
