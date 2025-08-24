@@ -159,6 +159,89 @@ def clean_session_data():
     
     print(f"Session cleaned. New size: {get_session_size()} bytes")
 
+def generate_chart_insights(df, query):
+    """Generate natural language insights for chart data using OpenAI"""
+    try:
+        if df.empty:
+            return "No data available for analysis."
+        
+        # Prepare data summary for the AI
+        data_summary = {
+            'row_count': len(df),
+            'columns': df.columns.tolist(),
+            'sample_data': df.head(5).to_dict('records'),  # First 5 rows
+        }
+        
+        # Add summary statistics for numeric columns
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        for col in numeric_cols:
+            if len(numeric_cols) == 1:  # Focus on the main metric
+                data_summary[f'{col}_stats'] = {
+                    'min': float(df[col].min()),
+                    'max': float(df[col].max()),
+                    'total': float(df[col].sum()),
+                    'average': float(df[col].mean())
+                }
+        
+        # Simple trend detection for time series data
+        trend_info = ""
+        if len(numeric_cols) > 0 and len(df) > 2:
+            main_col = numeric_cols[0]
+            values = df[main_col].tolist()
+            first_half = values[:len(values)//2]
+            second_half = values[len(values)//2:]
+            
+            if sum(second_half) > sum(first_half):
+                trend_info = "The data shows an upward trend over time."
+            elif sum(second_half) < sum(first_half):
+                trend_info = "The data shows a downward trend over time."
+            else:
+                trend_info = "The data shows relatively stable patterns."
+        
+        # Create a focused prompt
+        sample_data_str = str(data_summary['sample_data'][:3])  # First 3 rows only
+        
+        prompt = f"""Analyze this data and provide ONE clear, business-friendly insight in 1-2 sentences maximum.
+
+Data: {sample_data_str}
+Total rows: {data_summary['row_count']}
+Trend: {trend_info}
+
+Focus on the most important finding. Use specific numbers. Be concise and actionable.
+
+Good examples:
+- "Sales peaked at $45,000 in Q3 before dropping 23% in Q4."
+- "Customer satisfaction averages 4.2/5 with minimal seasonal variation."
+- "Revenue grew consistently from $12K to $28K over the 6-month period."
+"""
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a business analyst. Provide ONE key insight in 1-2 sentences. Be specific and actionable."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=100
+        )
+        
+        insight = response.choices[0].message.content.strip()
+        insight = insight.strip('"\'')
+        if not insight.endswith('.'):
+            insight += '.'
+            
+        return insight
+        
+    except Exception as e:
+        print(f"Error generating chart insights: {str(e)}")
+        # Fallback insight
+        try:
+            if not df.empty:
+                return f"Analysis shows {len(df)} data points across {len(df.columns)} key metrics."
+            else:
+                return "Data analysis completed successfully."
+        except:
+            return "Chart generated successfully."
 
 @app.route("/session_info")
 def session_info():
@@ -192,11 +275,14 @@ def rewrite_message(user_input):
         print(f"Error rewriting message: {str(e)}")
         return user_input  # Return original if rewriting fails
 
+# STEP 2: Update your index() route - Find this section and modify it:
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     result = None
     query = None
     chart_data_uri = None
+    chart_insights = None  # ADD THIS LINE
     export_available = False
     
     is_authenticated = 'credentials' in session
@@ -207,6 +293,7 @@ def index():
             flash("Please enter a question", "warning")
             return render_template("index.html", result="Please enter a question", 
                                  query=query, chart_path=chart_data_uri, 
+                                 chart_insights=chart_insights,  # ADD THIS
                                  is_authenticated=is_authenticated,
                                  export_available=export_available)
         
@@ -218,10 +305,10 @@ def index():
             
             # Check if it's an error message (not SQL)
             if query_result.startswith('❌') or 'not available' in query_result.lower():
-                # Return the validation error message
                 result = f"<div class='alert alert-warning'>{query_result.replace(chr(10), '<br>')}</div>"
                 query = None
                 chart_data_uri = None
+                chart_insights = None  # ADD THIS
                 flash("Query validation failed", "warning")
                 
             else:
@@ -233,17 +320,25 @@ def index():
                     result = df.to_html(classes="table table-bordered table-striped", index=False)
                     export_available = True
                     flash(f"✅ Query executed successfully! Found {len(df)} rows.", "success")
+                    
+                    # Generate chart
+                    try:
+                        chart_data_uri = generate_chart_base64(query, engine)
+                        print("✅ Chart generated successfully")
+                        
+                        # NEW: Generate chart insights
+                        if chart_data_uri:
+                            chart_insights = generate_chart_insights(df, query)
+                            session['chart_insights'] = chart_insights
+                            print(f"✅ Chart insights generated: {chart_insights}")
+                        
+                    except Exception as e:
+                        print(f"❌ Chart generation failed: {str(e)}")
+                        chart_data_uri = None
+                        chart_insights = None
                 else:
                     result = "<div class='alert alert-info'>Query executed but returned no results.</div>"
                     flash("Query returned no results", "info")
-                
-                # Generate chart
-                try:
-                    chart_data_uri = generate_chart_base64(query, engine)
-                    print("✅ Chart generated successfully")
-                except Exception as e:
-                    print(f"❌ Chart generation failed: {str(e)}")
-                    chart_data_uri = None
                 
                 session['query'] = query
                 session['has_chart'] = chart_data_uri is not None
@@ -254,13 +349,15 @@ def index():
             flash(f"❌ Error executing query: {str(e)}", "error")
     
     else:
-        # For GET requests, check if export is available from session
+        # For GET requests, check session data
         export_available = session.get('export_available', False)
+        chart_insights = session.get('chart_insights', None)  # ADD THIS
 
     return render_template("index.html", 
                          result=result, 
                          query=query, 
                          chart_path=chart_data_uri, 
+                         chart_insights=chart_insights,  # ADD THIS
                          is_authenticated=is_authenticated,
                          export_available=export_available)
 
