@@ -30,6 +30,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 import base64
 from flask import jsonify
+from flask import send_file, make_response
+from datetime import datetime
+import tempfile
+import os
+import io 
 
 # Add this to your app.py temporarily for debugging
 print("GCP_CLOUD_SQL_CONNECTION_NAME:", os.getenv('GCP_CLOUD_SQL_CONNECTION_NAME'))
@@ -63,6 +68,57 @@ CREDENTIALS_INFO = {
         "redirect_uris": [GOOGLE_REDIRECT_URI]
     }
 }
+
+
+
+# JavaScript helper functions for CSV export (add to your template)
+def get_csv_export_js():
+    return """
+    <script>
+    // CSV Export Functions
+    
+    function exportToCSV() {
+        // Show loading state
+        const exportBtn = document.querySelector('.btn-export-csv');
+        if (exportBtn) {
+            const originalText = exportBtn.innerHTML;
+            exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Exporting...';
+            exportBtn.disabled = true;
+            
+            // Create a temporary link to trigger download
+            window.location.href = '/export_csv';
+            
+            // Reset button after delay
+            setTimeout(() => {
+                exportBtn.innerHTML = originalText;
+                exportBtn.disabled = false;
+                showSuccessAlert('📊 CSV export completed!');
+            }, 2000);
+        }
+    }
+    
+    function showExportModal() {
+        // You can implement a modal for advanced export options
+        const modal = document.getElementById('exportModal');
+        if (modal) {
+            const bootstrap_modal = new bootstrap.Modal(modal);
+            bootstrap_modal.show();
+        }
+    }
+    
+    // Handle export button clicks
+    document.addEventListener('DOMContentLoaded', function() {
+        const exportBtn = document.querySelector('.btn-export-csv');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                exportToCSV();
+            });
+        }
+    });
+    </script>
+    """
+
 
 def clean_session_data():
     """Clean up session data to prevent overflow"""
@@ -141,15 +197,18 @@ def index():
     result = None
     query = None
     chart_data_uri = None
+    export_available = False
     
     is_authenticated = 'credentials' in session
 
     if request.method == "POST":
         question = request.form.get("question")
         if not question:
+            flash("Please enter a question", "warning")
             return render_template("index.html", result="Please enter a question", 
                                  query=query, chart_path=chart_data_uri, 
-                                 is_authenticated=is_authenticated)
+                                 is_authenticated=is_authenticated,
+                                 export_available=export_available)
         
         try:
             clean_session_data()
@@ -161,14 +220,22 @@ def index():
             if query_result.startswith('❌') or 'not available' in query_result.lower():
                 # Return the validation error message
                 result = f"<div class='alert alert-warning'>{query_result.replace(chr(10), '<br>')}</div>"
-                query = None  # No SQL to show
+                query = None
                 chart_data_uri = None
+                flash("Query validation failed", "warning")
                 
             else:
                 # It's valid SQL - proceed normally
                 query = query_result
                 df = pd.read_sql(query, engine)
-                result = df.to_html(classes="table table-bordered", index=False)
+                
+                if not df.empty:
+                    result = df.to_html(classes="table table-bordered table-striped", index=False)
+                    export_available = True
+                    flash(f"✅ Query executed successfully! Found {len(df)} rows.", "success")
+                else:
+                    result = "<div class='alert alert-info'>Query executed but returned no results.</div>"
+                    flash("Query returned no results", "info")
                 
                 # Generate chart
                 try:
@@ -180,12 +247,22 @@ def index():
                 
                 session['query'] = query
                 session['has_chart'] = chart_data_uri is not None
+                session['export_available'] = export_available
             
         except Exception as e:
             result = f"<div class='alert alert-danger'>Error: {str(e)}</div>"
+            flash(f"❌ Error executing query: {str(e)}", "error")
+    
+    else:
+        # For GET requests, check if export is available from session
+        export_available = session.get('export_available', False)
 
-    return render_template("index.html", result=result, query=query, 
-                         chart_path=chart_data_uri, is_authenticated=is_authenticated)
+    return render_template("index.html", 
+                         result=result, 
+                         query=query, 
+                         chart_path=chart_data_uri, 
+                         is_authenticated=is_authenticated,
+                         export_available=export_available)
 
 
 def send_email(subject, body, to_email, chart_image_bytes=None, table_html=None):
@@ -335,6 +412,117 @@ def logout():
     session.clear()
     return redirect(url_for('index'))
 
+
+@app.route("/export_csv")
+def export_csv():
+    """Export current query results to CSV - clean data only"""
+    
+    # Check if user has query results
+    if 'query' not in session:
+        flash('No query results to export. Please run a query first.', 'error')
+        return redirect(url_for('index'))
+    
+    try:
+        query = session.get('query')
+        if not query:
+            flash('No valid query found to export.', 'error')
+            return redirect(url_for('index'))
+        
+        # Execute the query to get fresh results
+        df = pd.read_sql(query, engine)
+        
+        if df.empty:
+            flash('Query returned no results to export.', 'warning')
+            return redirect(url_for('index'))
+        
+        # Create CSV content - CLEAN VERSION (no metadata)
+        output = io.StringIO()
+        df.to_csv(output, index=False)  # Just the data, no extra headers
+        output.seek(0)
+        
+        # Create filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"data_export_{timestamp}.csv"
+        
+        # Create response with proper headers
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response.headers['Content-Length'] = len(output.getvalue())
+        
+        return response
+        
+    except Exception as e:
+        flash(f'Error exporting CSV: {str(e)}', 'error')
+        return redirect(url_for('index'))
+
+@app.route("/export_csv_advanced", methods=["POST"])
+def export_csv_advanced():
+    """Advanced CSV export with custom options"""
+    
+    if 'query' not in session:
+        return jsonify({
+            'success': False,
+            'error': 'No query results available for export'
+        })
+    
+    try:
+        # Get export options from form
+        include_metadata = request.form.get('include_metadata', 'true') == 'true'
+        custom_filename = request.form.get('filename', '').strip()
+        date_format = request.form.get('date_format', '%Y-%m-%d')
+        
+        query = session.get('query')
+        df = pd.read_sql(query, engine)
+        
+        if df.empty:
+            return jsonify({
+                'success': False,
+                'error': 'No data to export'
+            })
+        
+        # Format dates if any datetime columns exist
+        for col in df.columns:
+            if df[col].dtype == 'datetime64[ns]':
+                df[col] = df[col].dt.strftime(date_format)
+        
+        # Create filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if custom_filename:
+            filename = f"{custom_filename}_{timestamp}.csv"
+        else:
+            filename = f"analysis_export_{timestamp}.csv"
+        
+        # Create CSV content
+        output = io.StringIO()
+        
+        if include_metadata:
+            output.write(f"# Analysis Export\n")
+            output.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            output.write(f"# Rows: {len(df)}, Columns: {len(df.columns)}\n")
+            output.write(f"# Query: {query}\n")
+            output.write("#\n")
+        
+        df.to_csv(output, index=False)
+        
+        # Create temporary file for download
+        temp_file = tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False)
+        temp_file.write(output.getvalue())
+        temp_file.close()
+        
+        # Return file download
+        return send_file(
+            temp_file.name,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='text/csv'
+        )
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Export failed: {str(e)}'
+        })
 
 # Add a simple route to check auth status
 @app.route("/auth_status")
