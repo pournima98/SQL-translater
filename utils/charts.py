@@ -1,4 +1,4 @@
-# utils/charts.py - FIXED VERSION with corrected column selection
+# utils/charts.py - FIXED VERSION with proper time series handling
 import io
 import base64
 import matplotlib.pyplot as plt
@@ -27,6 +27,7 @@ class EnhancedChartGenerator:
                 r'group\s+by\s+date',
                 r'order\s+by\s+.*date',
                 r'extract\s*\(\s*year',
+                r'extract\s*\(\s*month',
                 r'date_format\s*\(',
                 r'year\s*\(',
                 r'month\s*\('
@@ -38,8 +39,8 @@ class EnhancedChartGenerator:
                 r'order\s+by.*desc.*limit',
                 r'max\s*\(',
                 r'greatest\s*\(',
-                r'sum\s*\(',  # Often indicates ranking by totals
-                r'total_'     # Common pattern for ranking queries
+                r'sum\s*\(',
+                r'total_'
             ],
             'comparison': [
                 r'group\s+by\s+(?!.*date)(?!.*year)(?!.*month)',
@@ -59,7 +60,9 @@ class EnhancedChartGenerator:
         
         # Column type inference patterns - IMPROVED
         self.column_patterns = {
-            'date': [r'date', r'time', r'year', r'month', r'created', r'updated'],
+            'date': [r'date', r'time', r'created', r'updated'],
+            'year': [r'^year$', r'yr$'],
+            'month': [r'^month$', r'mon$', r'month_num'],
             'money': [r'amount', r'revenue', r'sales', r'price', r'cost', r'payment', r'total_sales', r'total_amount'],
             'count': [r'count', r'total_count', r'number', r'quantity', r'^total$'],
             'name': [r'name', r'title', r'label', r'description'],
@@ -72,7 +75,7 @@ class EnhancedChartGenerator:
         sql_lower = sql_query.lower()
         
         intent = {
-            'type': 'comparison',  # default
+            'type': 'comparison',
             'is_time_series': False,
             'is_ranking': False,
             'is_aggregation': False,
@@ -81,11 +84,12 @@ class EnhancedChartGenerator:
             'select_columns': []
         }
         
-        # Check for time series
+        # Check for time series patterns
         for pattern in self.query_patterns['time_series']:
             if re.search(pattern, sql_lower):
                 intent['type'] = 'time_series'
                 intent['is_time_series'] = True
+                print(f"🕒 Detected time series pattern: {pattern}")
                 break
         
         # Check for ranking
@@ -94,7 +98,6 @@ class EnhancedChartGenerator:
                 intent['is_ranking'] = True
                 if 'limit' in sql_lower:
                     intent['has_limit'] = True
-                # If it's not time series but has ranking, make it comparison
                 if not intent['is_time_series']:
                     intent['type'] = 'ranking'
                 break
@@ -141,7 +144,7 @@ class EnhancedChartGenerator:
         # For text data
         if data_series.dtype == 'object':
             unique_count = data_series.nunique()
-            if unique_count <= 20:  # Limited categories
+            if unique_count <= 20:
                 return 'category'
             else:
                 return 'name'
@@ -151,15 +154,13 @@ class EnhancedChartGenerator:
     def preprocess_dataframe(self, df, sql_query):
         """Preprocess dataframe for better visualization"""
         
-        # Remove any columns that are just row indices
+        # Reset index
         df = df.reset_index(drop=True)
         
         # Handle date columns
         for col in df.columns:
             if df[col].dtype == 'object':
-                # Try to parse as datetime
                 try:
-                    # Check if it looks like a date
                     sample = df[col].dropna().head(5)
                     if len(sample) > 0:
                         parsed = pd.to_datetime(sample, errors='coerce')
@@ -168,31 +169,43 @@ class EnhancedChartGenerator:
                 except:
                     pass
         
-        # Handle numeric columns that should be integers
+        # Handle numeric columns
         for col in df.columns:
             if pd.api.types.is_numeric_dtype(df[col]):
                 try:
-                    # Check if it's a float column with integer-like values
                     if df[col].dtype == 'float64':
-                        # Use .all() to check if ALL values are integers when modulo 1 equals 0
                         non_null_values = df[col].fillna(0)
                         if (non_null_values % 1 == 0).all():
                             df[col] = df[col].fillna(0).astype('int64')
                 except Exception as e:
-                    # If conversion fails, skip this column
                     print(f"Warning: Could not convert {col} to integer: {e}")
                     continue
         
-        # Sort data logically
+        # FIXED: Better sorting for time series data
         intent = self.analyze_sql_query(sql_query)
         
         if intent['is_time_series']:
-            # Find date column and sort by it
-            date_cols = [col for col in df.columns if 'date' in col.lower() or 'year' in col.lower() or 'month' in col.lower()]
-            if date_cols:
-                df = df.sort_values(date_cols[0])
+            # Try to sort by year, then month
+            if 'year' in df.columns and 'month' in df.columns:
+                df = df.sort_values(['year', 'month'])
+                print("✅ Sorted by year and month")
+            elif any('year' in str(col).lower() for col in df.columns):
+                year_col = [col for col in df.columns if 'year' in str(col).lower()][0]
+                month_col = [col for col in df.columns if 'month' in str(col).lower()]
+                if month_col:
+                    df = df.sort_values([year_col, month_col[0]])
+                    print(f"✅ Sorted by {year_col} and {month_col[0]}")
+                else:
+                    df = df.sort_values(year_col)
+                    print(f"✅ Sorted by {year_col}")
+            else:
+                # Find date column
+                date_cols = [col for col in df.columns if 'date' in col.lower()]
+                if date_cols:
+                    df = df.sort_values(date_cols[0])
+                    print(f"✅ Sorted by {date_cols[0]}")
         elif intent['is_ranking']:
-            # Sort by numeric columns descending (but not ID columns)
+            # Sort by numeric columns descending
             numeric_cols = [col for col in df.select_dtypes(include=[np.number]).columns 
                           if self.classify_column_type(col, df[col]) != 'id']
             if len(numeric_cols) > 0:
@@ -201,7 +214,7 @@ class EnhancedChartGenerator:
         return df
     
     def smart_column_selection(self, df, sql_intent):
-        """FIXED: Intelligently select X and Y columns based on data and query intent"""
+        """FIXED: Better column selection for time series"""
         
         if len(df.columns) < 2:
             raise ValueError("Need at least 2 columns for visualization")
@@ -218,27 +231,40 @@ class EnhancedChartGenerator:
         
         print(f"DEBUG - Column types: {[(col, info['type']) for col, info in columns_info.items()]}")
         
-        # Smart selection based on query intent
         x_col, y_col = None, None
         
         if sql_intent['is_time_series']:
-            # X should be time, Y should be measure
-            time_cols = [col for col, info in columns_info.items() 
-                        if info['type'] in ['date'] or 'year' in col.lower() or 'month' in col.lower()]
+            # For time series, we need to create a proper time axis
+            time_cols = []
+            
+            # Look for year and month columns
+            year_cols = [col for col, info in columns_info.items() if info['type'] == 'year' or 'year' in col.lower()]
+            month_cols = [col for col, info in columns_info.items() if info['type'] == 'month' or 'month' in col.lower()]
+            
+            if year_cols and month_cols:
+                # We have both year and month - create a combined time axis
+                x_col = 'time_period'  # We'll create this
+                print(f"🕒 Will create time_period from {year_cols[0]} and {month_cols[0]}")
+            elif year_cols:
+                x_col = year_cols[0]
+            elif month_cols:
+                x_col = month_cols[0]
+            else:
+                # Look for date columns
+                date_cols = [col for col, info in columns_info.items() if info['type'] == 'date']
+                if date_cols:
+                    x_col = date_cols[0]
+            
+            # Y should be the measure
             measure_cols = [col for col, info in columns_info.items() 
                           if info['is_numeric'] and info['type'] in ['count', 'money', 'measure']]
-            
-            if time_cols:
-                x_col = time_cols[0]
             if measure_cols:
                 y_col = measure_cols[0]
         
         elif sql_intent['is_ranking'] or sql_intent['is_aggregation']:
-            # X should be categorical/name, Y should be the measure we're ranking by
-            # FIXED: Prioritize non-ID columns for categorical axis
+            # X should be categorical, Y should be measure
             cat_cols = [col for col, info in columns_info.items() 
                        if info['type'] in ['category', 'name'] and info['cardinality'] <= 50]
-            # FIXED: Prioritize money/measure columns over IDs for Y-axis
             measure_cols = [col for col, info in columns_info.items() 
                           if info['is_numeric'] and info['type'] in ['money', 'count', 'measure']]
             
@@ -247,7 +273,7 @@ class EnhancedChartGenerator:
                 y_col = measure_cols[0]
         
         else:
-            # Default: categorical for X, numeric for Y (but avoid IDs)
+            # Default selection
             cat_cols = [col for col, info in columns_info.items() 
                        if not info['is_numeric'] or info['type'] == 'category']
             num_cols = [col for col, info in columns_info.items() 
@@ -257,16 +283,14 @@ class EnhancedChartGenerator:
                 x_col = cat_cols[0]
                 y_col = num_cols[0]
         
-        # Fallback: pick smartly from available columns, avoiding IDs when possible
+        # Fallback selection
         if not x_col or not y_col:
             cols = list(df.columns)
             
-            # For X-axis, prefer non-numeric or categorical
             if not x_col:
                 non_numeric_cols = [col for col in cols if not pd.api.types.is_numeric_dtype(df[col])]
                 x_col = non_numeric_cols[0] if non_numeric_cols else cols[0]
             
-            # For Y-axis, prefer numeric non-ID columns
             if not y_col:
                 numeric_non_id_cols = [col for col in cols 
                                      if pd.api.types.is_numeric_dtype(df[col]) 
@@ -275,20 +299,54 @@ class EnhancedChartGenerator:
                 if numeric_non_id_cols:
                     y_col = numeric_non_id_cols[0]
                 else:
-                    # Last resort: pick any column that's not x_col
                     y_col = [col for col in cols if col != x_col][0]
         
-        print(f"DEBUG - Selected: X={x_col} (type: {columns_info[x_col]['type']}), Y={y_col} (type: {columns_info[y_col]['type']})")
+        print(f"DEBUG - Selected: X={x_col}, Y={y_col}")
         
         return x_col, y_col
+    
+    def create_time_period_column(self, df):
+        """Create a proper time period column for time series charts"""
+        try:
+            # Look for year and month columns
+            year_col = None
+            month_col = None
+            
+            for col in df.columns:
+                if 'year' in col.lower():
+                    year_col = col
+                elif 'month' in col.lower():
+                    month_col = col
+            
+            if year_col and month_col:
+                # Create a proper datetime or string representation
+                df['time_period'] = df[year_col].astype(str) + '-' + df[month_col].astype(str).str.zfill(2)
+                
+                # Try to convert to datetime for better sorting and display
+                try:
+                    df['time_period_dt'] = pd.to_datetime(df['time_period'], format='%Y-%m')
+                    df = df.sort_values('time_period_dt')
+                    # Use the string version for display but sorted by datetime
+                    print("✅ Created time_period column with datetime sorting")
+                except:
+                    # Fallback to string sorting
+                    df = df.sort_values('time_period')
+                    print("✅ Created time_period column with string sorting")
+                
+                return df, 'time_period'
+            
+        except Exception as e:
+            print(f"❌ Error creating time period column: {e}")
+        
+        return df, None
     
     def determine_chart_type(self, df, x_col, y_col, sql_intent):
         """Determine the best chart type based on data and intent"""
         
         x_info = {
-            'type': self.classify_column_type(x_col, df[x_col]),
-            'is_numeric': pd.api.types.is_numeric_dtype(df[x_col]),
-            'cardinality': df[x_col].nunique()
+            'type': self.classify_column_type(x_col, df[x_col]) if x_col in df.columns else 'unknown',
+            'is_numeric': pd.api.types.is_numeric_dtype(df[x_col]) if x_col in df.columns else False,
+            'cardinality': df[x_col].nunique() if x_col in df.columns else 0
         }
         
         y_info = {
@@ -296,35 +354,35 @@ class EnhancedChartGenerator:
             'is_numeric': pd.api.types.is_numeric_dtype(df[y_col])
         }
         
+        print(f"📊 Chart type analysis: X={x_info}, Y={y_info}, Intent={sql_intent['type']}")
+        
         # Time series = line chart
-        if sql_intent['is_time_series'] or x_info['type'] == 'date':
+        if sql_intent['is_time_series'] or x_col == 'time_period':
+            print("📈 Selecting line chart for time series")
             return 'line'
         
-        # SPECIFIC: Regional data = pie chart
+        # Regional data = pie chart
         if (not x_info['is_numeric'] and y_info['is_numeric'] and 
             any(keyword in x_col.lower() for keyword in ['region', 'area', 'location']) and
-            x_info['cardinality'] <= 8):  # Reasonable limit for regions
+            x_info['cardinality'] <= 8):
             return 'pie'
         
         # Ranking with limit = bar chart
         if sql_intent['is_ranking'] or sql_intent['has_limit']:
             return 'bar'
         
-        # Two numeric columns = scatter (but only if makes sense)
+        # Two numeric columns = scatter
         if x_info['is_numeric'] and y_info['is_numeric'] and not sql_intent['is_ranking']:
-            # Avoid scatter for obvious categorical data
             if x_info['cardinality'] > 10 and y_info['cardinality'] > 10:
                 return 'scatter'
         
         # Categorical vs numeric = bar or pie
         if not x_info['is_numeric'] and y_info['is_numeric']:
-            # Pie chart only for very small datasets (original logic)
             if len(df) <= 5 and x_info['cardinality'] <= 5:
                 return 'pie'
             else:
                 return 'bar'
         
-        # Default to bar chart
         return 'bar'
     
     def create_smart_title(self, df, x_col, y_col, sql_intent, chart_type):
@@ -335,7 +393,7 @@ class EnhancedChartGenerator:
         
         if sql_intent['is_ranking'] and sql_intent['has_limit']:
             return f"Top {len(df)} {x_formatted} by {y_formatted}"
-        elif sql_intent['is_time_series']:
+        elif sql_intent['is_time_series'] or x_col == 'time_period':
             return f"{y_formatted} Over Time"
         elif chart_type == 'pie':
             return f"{y_formatted} Distribution"
@@ -346,10 +404,11 @@ class EnhancedChartGenerator:
     
     def format_column_name(self, col_name):
         """Format column names for display"""
-        # Handle common SQL aliases
+        if col_name == 'time_period':
+            return 'Time Period'
+        
         formatted = col_name.replace('_', ' ').title()
         
-        # Handle common patterns
         replacements = {
             'Id': 'ID',
             'Url': 'URL', 
@@ -366,40 +425,51 @@ class EnhancedChartGenerator:
         for old, new in replacements.items():
             formatted = formatted.replace(old, new)
         
-        # Clean up parentheses
         formatted = re.sub(r'\([^)]*\)', '', formatted).strip()
         
         return formatted
     
     def create_visualization(self, df, x_col, y_col, chart_type, title):
-        """Create the actual chart"""
+        """Create the actual chart with FIXED time series handling"""
         
-        # Set up the plot
         plt.style.use('default')
         fig, ax = plt.subplots(figsize=(12, 8))
         
-        # Get data
-        x_data = df[x_col]
+        # Handle special time period case
+        if x_col == 'time_period':
+            x_data = df['time_period']
+            # Create numeric indices for plotting
+            x_positions = range(len(x_data))
+        else:
+            x_data = df[x_col]
+            x_positions = range(len(x_data))
+        
         y_data = df[y_col]
         
+        print(f"📊 Creating {chart_type} chart with {len(df)} data points")
+        
         if chart_type == 'line':
-            # Handle datetime x-axis
-            if pd.api.types.is_datetime64_any_dtype(x_data):
-                ax.plot(x_data, y_data, marker='o', linewidth=3, markersize=8, 
-                       color='steelblue', markerfacecolor='white', 
-                       markeredgecolor='steelblue', markeredgewidth=2)
-            else:
-                ax.plot(range(len(x_data)), y_data, marker='o', linewidth=3, markersize=8,
-                       color='steelblue', markerfacecolor='white', 
-                       markeredgecolor='steelblue', markeredgewidth=2)
-                ax.set_xticks(range(len(x_data)))
-                ax.set_xticklabels(x_data, rotation=45, ha='right')
+            # FIXED: Line chart with proper time axis
+            ax.plot(x_positions, y_data, marker='o', linewidth=3, markersize=8, 
+                   color='steelblue', markerfacecolor='white', 
+                   markeredgecolor='steelblue', markeredgewidth=2)
             
+            # Set custom x-tick labels
+            ax.set_xticks(x_positions)
+            if x_col == 'time_period':
+                # Format time period labels
+                labels = [str(label) for label in x_data]
+            else:
+                labels = [str(label) for label in x_data]
+            
+            ax.set_xticklabels(labels, rotation=45, ha='right')
             ax.grid(True, alpha=0.3)
+            
+            print(f"✅ Line chart created with {len(x_positions)} points")
             
         elif chart_type == 'bar':
             colors = plt.cm.Set3(np.linspace(0, 1, len(df))) if len(df) > 1 else ['steelblue']
-            bars = ax.bar(range(len(x_data)), y_data, color=colors, alpha=0.8, 
+            bars = ax.bar(x_positions, y_data, color=colors, alpha=0.8, 
                          edgecolor='navy', linewidth=0.5)
             
             # Add value labels on bars
@@ -419,12 +489,11 @@ class EnhancedChartGenerator:
                        label, ha='center', va='bottom', fontweight='bold', fontsize=10)
             
             # Set x-tick labels
-            ax.set_xticks(range(len(x_data)))
-            # Truncate long labels
+            ax.set_xticks(x_positions)
             labels = [str(label)[:20] + '...' if len(str(label)) > 20 else str(label) for label in x_data]
             ax.set_xticklabels(labels, rotation=45, ha='right')
             
-            # Adjust y-axis to give space for labels
+            # Adjust y-axis
             y_max = max(y_data) if len(y_data) > 0 else 0
             ax.set_ylim(0, y_max * 1.15)
             
@@ -432,13 +501,16 @@ class EnhancedChartGenerator:
             colors = plt.cm.Set3(np.linspace(0, 1, len(df)))
             wedges, texts, autotexts = ax.pie(y_data, labels=x_data, autopct='%1.1f%%', 
                                             startangle=90, colors=colors)
-            # Make percentage text bold
             for autotext in autotexts:
                 autotext.set_fontweight('bold')
                 
         elif chart_type == 'scatter':
-            ax.scatter(x_data, y_data, alpha=0.7, s=100, color='steelblue', 
+            ax.scatter(x_data if pd.api.types.is_numeric_dtype(df[x_col]) else x_positions, 
+                      y_data, alpha=0.7, s=100, color='steelblue', 
                       edgecolor='navy', linewidth=1)
+            if not pd.api.types.is_numeric_dtype(df[x_col]):
+                ax.set_xticks(x_positions)
+                ax.set_xticklabels(x_data, rotation=45, ha='right')
             ax.grid(True, alpha=0.3)
         
         # Formatting
@@ -454,7 +526,6 @@ class EnhancedChartGenerator:
                 elif y_type == 'count' and df[y_col].dtype in ['int64', 'int32']:
                     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x):,}'))
         
-        # Title and layout
         ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
         plt.tight_layout()
         
@@ -483,7 +554,15 @@ class EnhancedChartGenerator:
         
         # Analyze SQL intent
         sql_intent = self.analyze_sql_query(sql_query)
-        print(f"🎯 Detected intent: {sql_intent['type']}")
+        print(f"🎯 Detected intent: {sql_intent}")
+        
+        # Handle time series data specially
+        if sql_intent['is_time_series']:
+            # Check if we need to create a time period column
+            if 'year' in [col.lower() for col in df.columns] and 'month' in [col.lower() for col in df.columns]:
+                df, time_col = self.create_time_period_column(df)
+                if time_col:
+                    print(f"✅ Created time period column: {time_col}")
         
         # Smart column selection
         x_col, y_col = self.smart_column_selection(df, sql_intent)
@@ -501,9 +580,7 @@ class EnhancedChartGenerator:
 
 
 def generate_chart_base64(query, engine):
-    """
-    FIXED backwards-compatible function for app.py
-    """
+    """Backwards-compatible function for app.py"""
     try:
         print(f"🔍 Executing SQL: {query[:100]}...")
         
